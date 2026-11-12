@@ -53,6 +53,11 @@ class BrowserEntry:
     duration_seconds: float | None
 
 
+_LIST_ROWS = 12
+# Frame border and padding 4, browser border and head 3, its margin 1, options 2, buttons 2.
+_ROWS_BESIDE_LIST = 12
+
+
 class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
     """Browse folders from the home folder, choose one audio file and its options.
 
@@ -77,7 +82,7 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
     TranscribeDialog #transcribe-head { height: 1; }
     TranscribeDialog #transcribe-folder { width: 1fr; color: #8b93a1; }
     TranscribeDialog #transcribe-search { width: 1fr; }
-    TranscribeDialog #transcribe-list-scroll { height: auto; max-height: 12; }
+    TranscribeDialog #transcribe-list-scroll { height: auto; }
     TranscribeDialog .transcribe-option { height: 1; }
     TranscribeDialog .transcribe-option Label { width: 20; padding: 0 0 0 2; }
     TranscribeDialog #transcribe-speakers, TranscribeDialog #transcribe-refine { width: 14; }
@@ -120,7 +125,17 @@ class TranscribeDialog(Dialog[tuple[Path, dict[str, object]] | None]):
         # A focused scroll body would take the arrow keys of the list.
         self.body_widget().can_focus = False
         self._draw_options()
+        self._fit_list()
         self._open(self.directory)
+
+    def on_resize(self) -> None:
+        self._fit_list()
+
+    def _fit_list(self) -> None:
+        """Give the file list the rows that the dialog has left, at most 12."""
+        frame_rows = self.app.size.height * 9 // 10
+        rows = min(_LIST_ROWS, frame_rows - _ROWS_BESIDE_LIST)
+        self.query_one("#transcribe-list-scroll").styles.max_height = max(1, rows)
 
     @property
     def selected_entry(self) -> BrowserEntry | None:

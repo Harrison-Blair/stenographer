@@ -17,8 +17,6 @@ from pathlib import Path
 
 TOPOLOGY_ROOT = Path("/sys/devices/system/cpu")
 PROC_ROOT = Path("/proc")
-# user nice system idle iowait irq softirq steal; guest time is already in user.
-_SYSTEM_CPU_FIELDS = 8
 # utime and stime follow the command name at fields 14 and 15 of /proc/PID/stat.
 _UTIME_AFTER_NAME = 11
 
@@ -48,21 +46,6 @@ def count_physical_cores(affinity: set[int], topology_root: Path) -> int | None:
     except (OSError, ValueError):
         return None
     return len(physical)
-
-
-def read_system_cpu_times(proc_root: Path = PROC_ROOT) -> tuple[int, int] | None:
-    """Return ``(total, idle)`` jiffies of all CPUs from ``/proc/stat``; idle counts iowait."""
-    try:
-        with (proc_root / "stat").open(encoding="ascii") as stat:
-            first = stat.readline().split()
-        if not first or first[0] != "cpu":
-            return None
-        values = [int(value) for value in first[1 : 1 + _SYSTEM_CPU_FIELDS]]
-    except (OSError, ValueError):
-        return None
-    if len(values) < 5:
-        return None
-    return sum(values), values[3] + values[4]
 
 
 def read_process_cpu_ticks(pid: int, proc_root: Path = PROC_ROOT) -> int | None:
@@ -99,9 +82,6 @@ class LinuxProcessCounters:
         self._proc_root = proc_root
         self.clock_ticks = os.sysconf("SC_CLK_TCK") if clock_ticks is None else clock_ticks
         self._page_size = os.sysconf("SC_PAGE_SIZE") if page_size is None else page_size
-
-    def system_cpu_times(self) -> tuple[int, int] | None:
-        return read_system_cpu_times(self._proc_root)
 
     def process_cpu_ticks(self, pid: int) -> int | None:
         return read_process_cpu_ticks(pid, self._proc_root)

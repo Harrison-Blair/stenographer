@@ -96,10 +96,10 @@ async def test_shell_nav_badges_show_recording_paused_entries_and_check_results(
     app = make_app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
-        assert _nav_rows(app)[0].endswith("● 00:00:03")
+        assert _nav_rows(app)[0].rstrip().endswith("● 00:00:03")
         services.session.paused = True
         app.refresh_view()
-        assert _nav_rows(app)[0].endswith("Ⅱ 00:00:03")
+        assert _nav_rows(app)[0].rstrip().endswith("Ⅱ 00:00:03")
         services.recording = False
         app.refresh_view()
         assert _nav_rows(app)[0].split() == ["▶", "1", "Record"]
@@ -110,10 +110,10 @@ async def test_shell_nav_badges_show_recording_paused_entries_and_check_results(
         assert _nav_rows(app)[2].split() == ["3", "Settings"]
         app.checks_tab.report = _report("warn", "warn")
         app.refresh_view()
-        assert _nav_rows(app)[2].endswith("2 W")
+        assert _nav_rows(app)[2].rstrip().endswith("2W")
         app.checks_tab.report = _report("warn", "warn", "fail")
         app.refresh_view()
-        assert _nav_rows(app)[2].endswith("1 F")
+        assert _nav_rows(app)[2].rstrip().endswith("1F")
 
     sessions_root = tmp_path / "sessions"
     _write_session(sessions_root, datetime(2026, 10, 20, 1, 12, 18, tzinfo=UTC))
@@ -130,7 +130,7 @@ async def test_shell_nav_badges_show_recording_paused_entries_and_check_results(
 
 async def test_shell_top_line_fits_its_longest_navigation_and_engine_text_at_120_columns(tmp_path):
     services = RecordingServices()
-    status = EngineStatus("bark-pro-int8", "labelling speakers", 100.0, 100.0, 1_610_612_736)
+    status = EngineStatus("bark-pro-int8", "transcribing 100%", 100.0, 106_300_000_000)
     app = make_app(tmp_path, services, engine_sampler=FakeSampler(status))
     async with app.run_test(size=(120, 35)) as pilot:
         await pilot.pause()
@@ -142,15 +142,13 @@ async def test_shell_top_line_fits_its_longest_navigation_and_engine_text_at_120
         top_line = _screen_text(app).splitlines()[0]
         assert "1 Record ● 00:00:03" in top_line
         assert "2 Library 123" in top_line
-        assert "3 Settings 2 F" in top_line
-        assert top_line.rstrip().endswith(
-            "bark-pro-int8 labelling speakers  cpu 100% all 100%  ram 1.5G"
-        )
-        assert top_line.index("2 F") < top_line.index("bark-pro-int8") - 1
+        assert "3 Settings 2F" in top_line
+        assert top_line.rstrip().endswith("bark-pro-int8   transcribing 100%  cpu 100%  ram 99.0G")
+        assert top_line.index("2F") < top_line.index("bark-pro-int8") - 1
 
 
 async def test_shell_top_line_draws_the_sampler_snapshot_each_second(tmp_path):
-    sampler = FakeSampler(EngineStatus("bark-pro-int8", "idle · unloaded", None, None, None))
+    sampler = FakeSampler(EngineStatus("bark-pro-int8", "idle", None, None))
     app = make_app(tmp_path, IdleServices(), engine_sampler=sampler)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
@@ -158,14 +156,12 @@ async def test_shell_top_line_draws_the_sampler_snapshot_each_second(tmp_path):
         def engine() -> str:
             return str(app.screen.query_one("#top-engine", Static).render())
 
-        assert engine() == "bark-pro-int8 idle · unloaded  cpu — all —  ram —"
+        assert engine() == "bark-pro-int8   idle               cpu    —  ram     —"
         samples = sampler.samples
-        sampler.status = EngineStatus(
-            "bark-pro-int8", "ready · 2 queued", 50.0, 25.0, 1_610_612_736
-        )
+        sampler.status = EngineStatus("bark-pro-int8", "idle 212s", 50.0, 1_610_612_736)
         await pilot.pause(1.2)
         assert sampler.samples > samples
-        assert engine() == "bark-pro-int8 ready · 2 queued  cpu 50% all 25%  ram 1.5G"
+        assert engine() == "bark-pro-int8   idle 212s          cpu  50%  ram  1.5G"
 
 
 async def test_shell_show_screen_changes_the_screen(tmp_path):
@@ -247,7 +243,7 @@ async def test_shell_set_check_summary_sets_badge_checks_tab_label_and_checks_su
         await pilot.press("3")
         app.checks_tab.report = _report("warn", "warn", "fail")
         app.refresh_view()
-        assert _nav_rows(app)[2].endswith("1 F")
+        assert _nav_rows(app)[2].rstrip().endswith("1F")
         assert str(app.screen.query_one("#tab-checks").label) == "  Checks ●3"
         await pilot.pause()
         tab = app.screen.query_one("#tab-checks")
@@ -257,8 +253,8 @@ async def test_shell_set_check_summary_sets_badge_checks_tab_label_and_checks_su
         await pilot.press("left")
         await pilot.pause()
         summary = app.screen.query_one("#checks-summary", Static).render().plain
-        assert summary.startswith("1 pass · 1 warn · 0 fail · last run ")
-        assert _nav_rows(app)[2].endswith("1 W")
+        assert summary.startswith(" 1 pass ·  1 warn ·  0 fail · last run ")
+        assert _nav_rows(app)[2].rstrip().endswith("1W")
         assert str(app.screen.query_one("#tab-checks").label) == "▶ Checks ●1"
 
 

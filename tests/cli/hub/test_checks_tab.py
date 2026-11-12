@@ -265,13 +265,13 @@ async def test_checks_summary_badge_and_tab_label_follow_the_last_run(tmp_path):
         await _open_checks(pilot)
         summary = app.screen.query_one("#checks-summary", Static).render()
         ran_at = app.checks_tab.report.checked_at
-        assert summary.plain == f"6 pass · 1 warn · 1 fail · last run {ran_at:%H:%M}"
+        assert summary.plain == f" 6 pass ·  1 warn ·  1 fail · last run {ran_at:%H:%M}"
         ok = summary.get_style_at_offset(0)
         assert ok.rich_style.color.get_truecolor() == Color.parse("#6ee69a").get_truecolor()
         zero = summary.get_style_at_offset(summary.plain.index("1 fail"))
         assert zero.rich_style.color is not None
 
-        assert str(_button(app, "#nav-settings").label).endswith("1 F")
+        assert str(_button(app, "#nav-settings").label).rstrip().endswith("1F")
         assert str(_button(app, "#tab-checks").label) == "▶ Checks ●2"
 
 
@@ -334,7 +334,7 @@ def test_checks_run_again_replaces_the_results(tmp_path):
             assert f"{FAIL} microphone" in _plain(app, "#checks-input")
             assert not app.screen.query_one("#checks-section-engine").display
             summary = app.screen.query_one("#checks-summary", Static).render()
-            assert summary.plain.startswith("0 pass · 0 warn · 1 fail · ")
+            assert summary.plain.startswith(" 0 pass ·  0 warn ·  1 fail · ")
             assert summary.get_style_at_offset(0).rich_style.color is None, "a zero count"
 
             assert str(_button(app, "#tab-checks").label) == "▶ Checks ●1"

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, ClassVar
 from rich.text import Text
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.geometry import Region
 from textual.widgets import Static
 
 from stenographer.cli.hub.config_view import ConfigEditor
@@ -31,6 +32,7 @@ from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.frame import Frame
 from stenographer.cli.hub.widgets.selectable_list import SelectableList
 from stenographer.cli.hub.widgets.status_token import StatusToken
+from stenographer.cli.hub.widgets.tier import tier_for
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 
@@ -57,6 +59,8 @@ _FIXES = {
     "overlay": ("overlay setting", "feedback.overlay"),
     "clipboard_restore": ("clipboard restore setting", "delivery.restore_clipboard"),
 }
+# Each count of the summary has a slot of this width.
+_COUNT_SLOT = 2
 # The test of a check: its button text and the setup test area.
 _TESTS = {
     "key_injector_ok": ("check access", "input_access"),
@@ -72,13 +76,20 @@ class ChecksTab(Vertical):
     """Run the system checks; fix and test the selected check; open the setup dialogs.
 
     The Settings screen focuses this tab while it shows, so its bindings come
-    before the bindings of the config tabs.
+    before the bindings of the config tabs. The list shrinks with the terminal:
+    the medium tier shows the check names only, and the narrow tier shows the
+    list alone, with ``enter`` for the detail of the selected check and
+    ``escape`` back to the list.
     """
 
     can_focus = True
+    # Unscoped: the tier rules start with the screen class.
+    SCOPED_CSS = False
     BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
         ("up", "move_check(-1)", "Previous check"),
         ("down", "move_check(1)", "Next check"),
+        ("enter", "open_detail", "Show the detail of the selected check"),
+        ("escape", "close_detail", "Back to the check list"),
         ("r", "run_checks", "Run the checks again"),
         ("f", "fix", "Fix the selected check"),
         ("t", "test", "Test the area of the selected check"),
@@ -100,7 +111,8 @@ class ChecksTab(Vertical):
         height: 1;
         padding: 0 1;
     }
-    ChecksTab #checks-summary { width: 1fr; }
+    ChecksTab #checks-summary { width: 1fr; text-wrap: nowrap; text-overflow: ellipsis; }
+    ChecksTab #checks-back { display: none; }
     ChecksTab #checks-body {
         height: 1fr;
         padding: 1 1 0 1;
@@ -110,7 +122,7 @@ class ChecksTab(Vertical):
         height: 1fr;
         margin-right: 2;
     }
-    ChecksTab #doctor-panel { height: 1fr; }
+    ChecksTab #doctor-panel { height: 1fr; overflow-y: auto; }
     ChecksTab .-section { height: 1; color: #8b93a1; text-style: bold; }
     ChecksTab .-section.-later { margin-top: 1; }
     ChecksTab #checks-list-hint {
@@ -146,6 +158,27 @@ class ChecksTab(Vertical):
         text-wrap: nowrap;
         text-overflow: ellipsis;
     }
+    Screen.-medium ChecksTab #checks-list-column { width: 24; }
+    Screen.-narrow ChecksTab #checks-list-column { width: 1fr; margin-right: 0; }
+    Screen.-narrow ChecksTab #checks-detail, Screen.-narrow ChecksTab #checks-run-again {
+        display: none;
+    }
+    Screen.-narrow ChecksTab.-detail #checks-detail { display: block; }
+    Screen.-narrow ChecksTab.-detail #checks-list-column { display: none; }
+    Screen.-narrow ChecksTab.-detail #checks-back { display: block; }
+    Screen.-medium ChecksTab #checks-detail, Screen.-narrow ChecksTab #checks-detail {
+        overflow-y: auto;
+    }
+    Screen.-medium ChecksTab #checks-detail-buttons,
+    Screen.-narrow ChecksTab #checks-detail-buttons,
+    Screen.-medium ChecksTab #checks-dialog-buttons,
+    Screen.-narrow ChecksTab #checks-dialog-buttons {
+        layout: vertical;
+        height: auto;
+    }
+    Screen.-medium ChecksTab #checks-warnings, Screen.-narrow ChecksTab #checks-warnings {
+        height: auto;
+    }
     """
 
     def __init__(
@@ -173,6 +206,7 @@ class ChecksTab(Vertical):
         self.index = 0
         self._test_statuses: dict[str, str] = {}
         self._view_key = None
+        self.detail_open = False
 
     @property
     def test_status(self) -> str:
@@ -181,6 +215,7 @@ class ChecksTab(Vertical):
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="checks-summary-row"):
+            yield HubButton("← Checks", key="esc", action="close_detail", id="checks-back")
             yield Static("", id="checks-summary", markup=False)
             yield HubButton("Run again", key="r", action="run_checks", id="checks-run-again")
         with Horizontal(id="checks-body"):
@@ -221,15 +256,48 @@ class ChecksTab(Vertical):
             return None
         return report.checks[self.index]
 
+    @property
+    def narrow(self) -> bool:
+        return tier_for(self.app.size.width) == "narrow"
+
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
-        return (
-            ("↑↓", "check"),
-            ("t", "test"),
-            ("f", "fix"),
+        if self.narrow and self.detail_open:
+            return (
+                ("esc", "back"),
+                ("f", "fix"),
+                ("t", "test"),
+                ("l", "log"),
+                ("c", "copy report"),
+            )
+        hints = (
             ("r", "run again"),
+            ("f", "fix"),
+            ("t", "test"),
             ("l", "log"),
-            ("c", "copy"),
+            ("c", "copy report"),
+            ("Q", "quick setup"),
+            ("m", "models"),
+            ("D", "defaults"),
         )
+        return (("enter", "detail"), *hints) if self.narrow else hints
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == "open_detail":
+            return self.narrow and not self.detail_open and self.selected is not None
+        if action == "close_detail":
+            return self.narrow and self.detail_open
+        return True
+
+    def action_open_detail(self) -> None:
+        self._show_detail(True)
+
+    def action_close_detail(self) -> None:
+        self._show_detail(False)
+
+    def _show_detail(self, shown: bool) -> None:
+        self.detail_open = shown
+        self.set_class(shown, "-detail")
+        self.app.refresh_view()
 
     def summary_text(self) -> Text:
         report = self.report
@@ -245,14 +313,16 @@ class ChecksTab(Vertical):
         for position, (count, word, tone) in enumerate(counts):
             if position:
                 summary.append(" · ")
-            summary.append(f"{count} {word}", style=StatusToken.TONES[tone] if count else None)
+            summary.append(
+                f"{count:>{_COUNT_SLOT}} {word}", style=StatusToken.TONES[tone] if count else None
+            )
         summary.append(f" · last run {ran_at}")
         return summary
 
     def refresh_view(self) -> None:
         if not self.is_mounted:
             return
-        key = (self.report, self.index, self.checking, self.test_status)
+        key = (self.report, self.index, self.checking, self.test_status, self._tier())
         if key == self._view_key:
             return
         self._refresh_checks()
@@ -317,15 +387,19 @@ class ChecksTab(Vertical):
             text.append(UNREADABLE_LOG, style=StatusToken.TONES["dim"])
         return text
 
+    def _tier(self) -> str:
+        return tier_for(self.app.size.width)
+
     def _refresh_checks(self):
         report, selected_index, loading = self.report, self.index, self.checking
+        names_only = self._tier() == "medium"
         for group in CHECK_GROUPS:
             rows: list[tuple[Text, str]] = []
             indexes: list[int] = []
             if report is not None:
                 for index, check in enumerate(report.checks):
                     if check.group == group:
-                        rows.append((self.row_text(check), ""))
+                        rows.append((self.row_text(check, names_only=names_only), ""))
                         indexes.append(index)
             elif group == "input":
                 rows.append(
@@ -333,17 +407,27 @@ class ChecksTab(Vertical):
                 )
             self._indexes[group] = tuple(indexes)
             selected = indexes.index(selected_index) if selected_index in indexes else None
-            self.query_one(f"#checks-{group}", SelectableList).set_rows(tuple(rows), selected)
+            rows_list = self.query_one(f"#checks-{group}", SelectableList)
+            rows_list.set_rows(tuple(rows), selected)
+            if selected is not None:
+                self.call_after_refresh(self._show_row, rows_list, selected)
             shown = bool(rows)
             self.query_one(f"#checks-section-{group}").display = shown
             self.query_one(f"#checks-{group}").display = shown
 
+    def _show_row(self, rows_list: SelectableList, row: int) -> None:
+        """Scroll the list so the selected row shows."""
+        top = rows_list.virtual_region.y + row
+        self.query_one("#doctor-panel").scroll_to_region(
+            Region(0, top, 1, 1), animate=False, immediate=True
+        )
+
     @staticmethod
-    def row_text(check: DoctorCheck) -> Text:
+    def row_text(check: DoctorCheck, *, names_only: bool = False) -> Text:
         tone = StatusToken.TONES[DOCTOR_STATE_TONES[check.status]]
         text = Text()
         text.append(DOCTOR_STATE_GLYPHS[check.status], style=tone)
-        text.append(f" {check.label:<{14}} {check.detail}")
+        text.append(f" {check.label}" if names_only else f" {check.label:<{14}} {check.detail}")
         return text
 
     def run_checks(self) -> None:

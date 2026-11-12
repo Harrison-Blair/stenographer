@@ -107,11 +107,11 @@ async def test_pilot_live_has_board_panels_and_captioned_split_columns(tmp_path)
         app.refresh_view()
         await pilot.pause()
         mixed = _screen_text(app)
-        assert "transcript · 2 speakers" in mixed
+        assert "transcript ·   2 speakers" in mixed
         assert app.screen.query_one("#rec-clock", Clock).value == "00:00:03"
         assert "[m] MIC" in mixed and "Default input" in mixed
         assert "[s] SYSTEM" in mixed and "default output" in mixed
-        assert mixed.count("-inf dBFS  peak -inf") == 2
+        assert mixed.count("  -inf dBFS  peak   -inf") == 2
         assert "100  200  400  800 1k6 3k2 6k4" in mixed
         assert "You" in mixed and "mic words" in mixed
         assert "Speaker 2" in mixed and "system words" in mixed
@@ -151,7 +151,7 @@ async def test_speaker_bar_sits_above_the_transcript_and_engine_status_stays(tmp
         assert bar.region.width == app.screen.query_one("#transcript").region.width
         items = str(bar.render()).split("   ")
         assert items[0].startswith("You ")
-        assert [item.rsplit(" ", 1)[0] for item in items[:2]] == ["You", "Speaker 2"]
+        assert [item.rsplit(" ", 1)[0].rstrip() for item in items[:2]] == ["You", "Speaker 2"]
         assert items[-1] == "! 1 phrase failed"
         for key in "21":
             await pilot.press(key)
@@ -164,7 +164,7 @@ async def test_pilot_live_mixed_and_split_views_keep_time_order(tmp_path):
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         content = _screen_text(app)
-        assert "transcript · 2 speakers" in content
+        assert "transcript ·   2 speakers" in content
         assert "Speaker 2" in content and "system words" in content
         assert "You" in content and "mic words" in content
         bar = str(app.screen.query_one("#speaker-bar", Static).render())
@@ -389,7 +389,7 @@ async def test_live_transcript_title_is_legible(tmp_path):
     app = make_app(tmp_path, FakeServices())
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
-        transcript_title = _visible_segment(app, "transcript · 2 speakers")
+        transcript_title = _visible_segment(app, "transcript ·   2 speakers")
         assert transcript_title.style.bold
         assert transcript_title.style.color is None or transcript_title.style.color.is_default
 

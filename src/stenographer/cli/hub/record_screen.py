@@ -50,6 +50,10 @@ _STATE_TOKENS = {
     "failed": ("!", "SAVE FAILED", "danger"),
 }
 _RECORD_HINTS = (("m", "mic"), ("s", "system"), ("v", "view"))
+_CLOCK_COLORS = {"record": "#ff875f", "saved": "#6ee69a"}
+# The speaker count and each talk time have a fixed slot, so nothing beside them moves.
+_SPEAKER_COUNT_SLOT = 3
+_TALK_TIME_SLOT = 5
 
 
 class RecordScreen(HubScreen):
@@ -88,15 +92,73 @@ class RecordScreen(HubScreen):
         margin-right: 1;
     }
     RecordScreen #rec-info { height: 1fr; color: #8b93a1; }
+    RecordScreen #rec-clock-line { display: none; }
     RecordScreen #rec-panel HubButton { margin-top: 0; }
+    RecordScreen #meters { width: auto; }
     RecordScreen #mic-column { width: 43; margin-right: 1; }
     RecordScreen #system-column { width: 43; }
     RecordScreen #device-button { margin-left: 1; }
     RecordScreen #transcript-frame { height: 1fr; }
     RecordScreen #transcript-head { height: 1; }
-    RecordScreen #transcript-title { width: 1fr; text-style: bold; }
+    RecordScreen #transcript-title {
+        width: 1fr;
+        text-style: bold;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
     RecordScreen #transcript { height: 1fr; }
     RecordScreen #transcript-hints { height: 1; }
+
+    /* Medium and narrow: the REC panel is one status line above the meters. */
+    RecordScreen.-medium #record-top, RecordScreen.-narrow #record-top {
+        layout: vertical;
+        height: auto;
+    }
+    RecordScreen.-medium #rec-panel, RecordScreen.-narrow #rec-panel {
+        layout: horizontal;
+        width: 1fr;
+        min-width: 0;
+        height: 1;
+        margin: 0;
+        padding: 0;
+        border: none;
+    }
+    RecordScreen.-medium #rec-state, RecordScreen.-narrow #rec-state { width: 14; }
+    RecordScreen.-medium #rec-clock, RecordScreen.-narrow #rec-clock { display: none; }
+    RecordScreen.-medium #rec-clock-line { display: block; width: 10; }
+    RecordScreen.-narrow #rec-clock-line { display: block; width: 9; }
+    RecordScreen.-medium #rec-info {
+        width: 1fr;
+        height: 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+    RecordScreen.-narrow #rec-info { display: none; }
+    RecordScreen.-medium #device-button, RecordScreen.-narrow #device-button { display: none; }
+
+    /* Medium: two short spectra side by side. */
+    RecordScreen.-medium #meters { width: 1fr; height: 6; }
+    RecordScreen.-medium #mic-column, RecordScreen.-medium #system-column {
+        width: 1fr;
+        height: 6;
+    }
+    RecordScreen.-medium #mic-column { margin-right: 0; }
+    RecordScreen.-medium #meters SpectrumMeter { width: 1fr; height: 6; }
+
+    /* Narrow: one level line per source. */
+    RecordScreen.-narrow #meters { layout: vertical; width: 1fr; height: 2; }
+    RecordScreen.-narrow #mic-column, RecordScreen.-narrow #system-column {
+        width: 1fr;
+        height: 1;
+        margin: 0;
+    }
+    RecordScreen.-narrow #meters SpectrumMeter {
+        width: 1fr;
+        height: 1;
+        padding: 0;
+        border: none;
+    }
+    RecordScreen.-narrow #rename-button, RecordScreen.-narrow #transcript-hints { display: none; }
     """
 
     def __init__(self, **kwargs) -> None:
@@ -127,22 +189,27 @@ class RecordScreen(HubScreen):
                 with Frame(id="rec-panel", variant="record"):
                     yield Static("", id="rec-state", markup=False)
                     yield Clock(id="rec-clock")
+                    yield Static("", id="rec-clock-line", markup=False)
                     yield Static("", id="rec-info", markup=False)
                     yield HubButton(
                         "● Record",
                         key="space",
                         action="record_toggle",
                         tone="record",
+                        tight=True,
                         id="rec-primary",
                     )
-                    yield HubButton("", key="space", action="record_toggle", id="rec-secondary")
-                with Vertical(id="mic-column"):
-                    yield self.meters["mic"]
                     yield HubButton(
-                        "change device…", key="d", action="choose_device", id="device-button"
+                        "", key="space", action="record_toggle", tight=True, id="rec-secondary"
                     )
-                with Vertical(id="system-column"):
-                    yield self.meters["system"]
+                with Horizontal(id="meters"):
+                    with Vertical(id="mic-column"):
+                        yield self.meters["mic"]
+                        yield HubButton(
+                            "change device…", key="d", action="choose_device", id="device-button"
+                        )
+                    with Vertical(id="system-column"):
+                        yield self.meters["system"]
             with Frame(id="transcript-frame", variant="fill"):
                 with Horizontal(id="transcript-head"):
                     yield Static("", id="transcript-title", markup=False)
@@ -151,6 +218,11 @@ class RecordScreen(HubScreen):
                 yield SpeakerBar(id="speaker-bar")
                 yield TranscriptScroll(id="transcript", can_focus=False)
                 yield KeyHints(footer=False, id="transcript-hints")
+
+    def on_mount(self) -> None:
+        # Inline: the app rules of HubButton outrank the default CSS of this screen.
+        for button in self.query("#rec-panel HubButton"):
+            button.styles.margin = (0, 0, 0, 2)
 
     # State
 
@@ -242,42 +314,59 @@ class RecordScreen(HubScreen):
         return items
 
     def _draw_rec_panel(self, state: str, session) -> None:
+        tier = self.tier
         update_changed(
             self.query_one("#rec-state", Static), StatusToken.text(*_STATE_TOKENS[state])
         )
+        seconds = session.elapsed_seconds if session is not None else 0
+        tone = "saved" if state == "saved" else "record"
         clock = self.query_one("#rec-clock", Clock)
-        clock.set_seconds(session.elapsed_seconds if session is not None else 0)
-        clock.set_tone("saved" if state == "saved" else "record")
-        if state == "idle":
-            info = f"mic · {self.mic_device()}"
-        elif state == "saved":
-            session_id = session.path.name
-            saved_at = self._saved_at.get(session_id)
-            info = f"saved {saved_at:%H:%M}\n{session_id}" if saved_at else session_id
-        elif state == "failed":
-            info = "\n".join(
-                f"{error}\n{failed.path.name}" for failed, error in reversed(self._failed_stops())
-            )
-        else:
-            started = session_started_at(session.path.name) if session is not None else None
-            info = f"started {started.astimezone():%H:%M}" if started else "started"
-        update_changed(self.query_one("#rec-info", Static), info)
+        clock.set_seconds(seconds)
+        clock.set_tone(tone)
+        update_changed(
+            self.query_one("#rec-clock-line", Static),
+            Text(Clock.format(seconds), style=f"bold {_CLOCK_COLORS[tone]}"),
+        )
+        update_changed(self.query_one("#rec-info", Static), self._rec_info(state, session, tier))
 
         primary = self.query_one("#rec-primary", HubButton)
         secondary = self.query_one("#rec-secondary", HubButton)
         if state in {"recording", "paused"}:
-            self._set_button(primary, "enter", "■ Stop & save", "stop")
+            stop = "■ Stop" if tier == "narrow" else "■ Stop & save"
+            self._set_button(primary, "enter", stop, "stop")
             resume = state == "paused"
             self._set_button(
                 secondary, "space", "▶ Resume" if resume else "Ⅱ Pause", "record_toggle"
             )
         elif state in {"saved", "failed"}:
             self._set_button(primary, "space", "● Record again", "record_toggle")
-            self._set_button(secondary, "o", "Open in Library", "open_library")
+            label = "Open in Library" if tier == "wide" else "Open"
+            self._set_button(secondary, "o", label, "open_library")
         else:
             self._set_button(primary, "space", "● Record", "record_toggle")
-        secondary.display = state != "idle"
+            if tier != "wide":
+                label = "device…" if tier == "narrow" else "change device…"
+                self._set_button(secondary, "d", label, "choose_device")
+        secondary.display = state != "idle" or tier != "wide"
         self.query_one("#device-button").visible = state in {"idle", "saved", "failed"}
+
+    def _rec_info(self, state: str, session, tier: str) -> str:
+        """Return the info rows of the REC panel, or the one note of the status line."""
+        if state == "idle":
+            return f"mic · {self.mic_device()}"
+        if state == "saved":
+            session_id = session.path.name
+            saved_at = self._saved_at.get(session_id)
+            if tier != "wide":
+                return f"saved {saved_at:%H:%M}" if saved_at else ""
+            return f"saved {saved_at:%H:%M}\n{session_id}" if saved_at else session_id
+        if state == "failed":
+            failures = tuple(reversed(self._failed_stops()))
+            if tier != "wide":
+                return str(failures[0][1]).splitlines()[0] if failures else ""
+            return "\n".join(f"{error}\n{failed.path.name}" for failed, error in failures)
+        started = session_started_at(session.path.name) if session is not None else None
+        return f"started {started.astimezone():%H:%M}" if started else "started"
 
     @staticmethod
     def _set_button(button: HubButton, key: str, label: str, action: str) -> None:
@@ -314,7 +403,9 @@ class RecordScreen(HubScreen):
 
     def _draw_transcript(self, state: str, session, lines: tuple, speakers: tuple) -> None:
         count = len(speakers)
-        title = f"transcript · {count} {'speaker' if count == 1 else 'speakers'}"
+        title = (
+            f"transcript · {count:>{_SPEAKER_COUNT_SLOT}} {'speaker' if count == 1 else 'speakers'}"
+        )
         if state == "saved" and self._stopping(session):
             title += " · saving…"
         update_changed(self.query_one("#transcript-title", Static), title)
@@ -405,7 +496,7 @@ class RecordScreen(HubScreen):
             color = speaker_color(speaker_id, speaker_ids, source=sources.get(speaker_id))
             item = Text()
             item.append(label, style=f"bold {color}")
-            item.append(f" {Clock.duration(seconds)}")
+            item.append(f" {Clock.talk_time(seconds):>{_TALK_TIME_SLOT}}")
             items.append(item)
         if not items:
             items.append(Text("no speakers yet", style="#8b93a1"))

@@ -10,7 +10,6 @@ import threading
 from collections.abc import Callable
 from typing import ClassVar
 
-from rich.text import Text
 from textual.app import App
 from textual.binding import Binding
 
@@ -34,7 +33,6 @@ from stenographer.cli.hub.setup_test import test_step as test_setup_step
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.cli.hub.widgets.help_overlay import HelpOverlay
-from stenographer.cli.hub.widgets.status_token import StatusToken
 from stenographer.cli.hub.widgets.top_bar import TopBar
 from stenographer.cli.shared.no_background_css import NO_BACKGROUND_CSS
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
@@ -259,25 +257,27 @@ class HubApp(App[None]):
         )
         screen.draw_hints()
 
-    def _badges(self) -> dict[str, str | Text]:
-        badges: dict[str, str | Text] = {}
+    def _badges(self) -> dict:
+        badges: dict = {}
         session = getattr(self.services, "session", None)
         if self.services.recording:
             paused = session is not None and session.paused
             elapsed = session.elapsed_seconds if session is not None else 0
-            badges["record"] = StatusToken.text(
-                "Ⅱ" if paused else "●", Clock.format(elapsed), "warn" if paused else "danger"
+            badges["record"] = (
+                "Ⅱ" if paused else "●",
+                Clock.format(elapsed),
+                "warn" if paused else "danger",
             )
         count = self.library_screen.entry_count
         if count is not None:
-            badges["library"] = str(count)
+            badges["library"] = count
         report = self.checks_tab.report
         if report is not None:
             warned, failed = report.warn_count, report.fail_count
             if failed:
-                badges["settings"] = Text(f"{failed} F", style=StatusToken.TONES["danger"])
+                badges["settings"] = (f"{failed}F", "danger")
             elif warned:
-                badges["settings"] = Text(f"{warned} W", style=StatusToken.TONES["warn"])
+                badges["settings"] = (f"{warned}W", "warn")
         return badges
 
     def _refresh_live(self) -> None:
