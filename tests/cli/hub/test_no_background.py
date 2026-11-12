@@ -128,7 +128,7 @@ async def test_hub_sections_and_dialogs_do_not_paint_backgrounds(tmp_path):
 
         await pilot.press("3")
         await pilot.pause()
-        for tab in ("general", "audio", "recognition", "live", "checks"):
+        for tab in ("settings", "checks"):
             app.settings_screen.select_tab(tab)
             await pilot.pause()
             _painted_backgrounds(app, f"Settings {tab}", errors)

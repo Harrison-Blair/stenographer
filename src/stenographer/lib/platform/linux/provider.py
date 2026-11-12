@@ -94,11 +94,6 @@ class LinuxPlatform(DiagnosticsHostMixin):
             on_cancel=on_cancel,
         )
 
-    def hotkey_devices(self) -> list[tuple[str, str]]:
-        from stenographer.lib.platform.linux.hotkey import list_hotkey_devices
-
-        return list_hotkey_devices()
-
     def capture_binding(self, stdin: TextIO, device: str | None, *, timeout: float) -> str:
         from stenographer.lib.platform.linux.binding_capture import capture_binding
 

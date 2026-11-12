@@ -8,7 +8,6 @@ provider supplied, so no cue is ever played and no service is ever restarted.
 
 from __future__ import annotations
 
-import dataclasses
 import io
 import pathlib
 from types import SimpleNamespace
@@ -199,34 +198,6 @@ def test_no_argument_non_tty_use_exits_two_before_loading_configuration():
     assert "requires an interactive terminal" in stderr.getvalue()
 
 
-def test_sounds_applies_the_loaded_log_level_before_discovery(monkeypatch, tmp_path):
-    from stenographer.lib.logging import pipeline as logging_setup
-
-    events: list[str] = []
-    defaults = Config.defaults()
-    loaded = dataclasses.replace(
-        defaults,
-        feedback=dataclasses.replace(defaults.feedback, log_level="warning"),
-    )
-    document = SimpleNamespace(path=tmp_path / "config.toml", config=loaded)
-    api = SimpleNamespace(
-        BUNDLED_PACKS=("minimal-ui",),
-        discover_sound_packs=lambda config_dir: events.append("discover") or ("minimal-ui",),
-        effective_sound_pack_name=lambda name, config_dir: "minimal-ui",
-    )
-
-    monkeypatch.setattr(sounds, "load_document", lambda *args, **kwargs: document)
-    monkeypatch.setattr(sounds, "sound_packs", api)
-    monkeypatch.setattr(
-        logging_setup,
-        "apply_stderr_level",
-        lambda level: events.append(f"level:{level}"),
-    )
-
-    assert sounds.run(list_only=True, stdout=io.StringIO(), stderr=io.StringIO()) == 0
-    assert events == ["level:warning", "discover"]
-
-
 def _platform(*, service_active="active", restart=(True, ""), probe_error=None):
     class Plat:
         def guidance(self):
@@ -392,12 +363,9 @@ def _document(tmp_path, saved, *, changed=True, error=None):
 
 @pytest.fixture
 def sounds_run(monkeypatch):
-    """Run ``sounds`` with the document, pack API, and log threshold supplied."""
-
-    from stenographer.lib.logging import pipeline as logging_setup
+    """Run ``sounds`` with the document and pack API supplied."""
 
     monkeypatch.delenv("STENOGRAPHER_CONFIG", raising=False)
-    monkeypatch.setattr(logging_setup, "apply_stderr_level", lambda level: None)
 
     def invoke(*, document, api, answers="", terminal=False, **kwargs):
         monkeypatch.setattr(sounds, "load_document", lambda *args, **kw: document)

@@ -46,10 +46,7 @@ class Model:
     ) -> None:
         from stenographer.lib.platform import current_platform
 
-        # An explicit thread count short-circuits the host probe entirely.
-        cpu_threads = cfg.cpu_threads or resolve_cpu_threads(
-            0, current_platform().physical_core_count()
-        )
+        cpu_threads = resolve_cpu_threads(current_platform().physical_core_count())
         started = time.monotonic()
         self._impl = recognizer if recognizer is not None else self._load(cpu_threads, data_dir)
         self.cpu_threads = cpu_threads

@@ -43,16 +43,16 @@ window. It cannot be asserted programmatically.
        transcription, and delivery still succeed.
     9. Set hotkey.mode = "toggle". Press KEY_RIGHTCTRL once, confirm the pill
        animates and the mic records with the key released, speak, press again,
-       and confirm the paste. Then set a short audio.max_recording_seconds
-       (e.g. 5), start a recording and keep talking past the cap: the stop cue
+       and confirm the paste. Then start a recording and keep talking past the
+       600-second cap: the stop cue
        must fire at the cap and the transcript up to it must be delivered. A
        press during transcription must do nothing.
     10. Set hotkey.mode = "hybrid" (the default). Tap KEY_RIGHTCTRL well inside
-       hotkey.hybrid_threshold_seconds: the pill must stay up with the key
+       the 0.5-second hybrid threshold: the pill must stay up with the key
        released. Speak, tap again, and confirm the paste. Then press and hold
        past the threshold, speak, and release — it must stop on release exactly
-       like hold mode. With a short audio.max_recording_seconds, confirm a
-       latched recording stops that many seconds after the PRESS (not after the
+       like hold mode. Confirm a latched recording stops 600 seconds after the
+       PRESS (not after the
        release), while a hold longer than the cap ends only on release and
        reports capped=1 in its summary.
     11. Run the complete opt-in integration suite. All of these checks are the

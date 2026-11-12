@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The Settings screen: a tab bar, the config tabs and the Checks tab."""
+"""The Settings screen: a tab row, the one-page settings and the Checks tab."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from rich.text import Text
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Click
-from textual.widgets import Input, Rule, Static
+from textual.widgets import Input, Static
 
 from stenographer.cli.hub.checks_tab import ChecksTab
 from stenographer.cli.hub.choice_dialog import ChoiceDialog
@@ -32,54 +32,25 @@ if TYPE_CHECKING:
 
     from stenographer.cli.hub.config_view import ConfigEditor
 
-# A rule between groups of rows; it matches no key.
-DIVIDER = "---"
-# Tab mapping of README §4.6; a pattern ending in ".*" matches a whole group.
-SETTINGS_TABS = (
+# The one settings page: six groups of dotted keys, in order.
+SETTINGS_GROUPS = (
     (
-        "general",
-        "General",
-        (
-            "hotkey.*",
-            DIVIDER,
-            "feedback.volume",
-            "feedback.mute",
-            "feedback.overlay",
-            "feedback.sound_pack",
-            "feedback.log_level",
-            DIVIDER,
-            "delivery.*",
-            DIVIDER,
-            "analytics.*",
-        ),
+        "Keys",
+        ("hotkey.binding", "hotkey.general_binding", "hotkey.cancel_binding", "hotkey.mode"),
     ),
     (
-        "audio",
         "Audio",
-        (
-            "audio.input_device",
-            "audio.max_recording_seconds",
-            "feedback.spectrum_floor_dbfs",
-        ),
+        ("audio.input_device", "feedback.volume", "feedback.sound_pack", "feedback.overlay"),
     ),
-    (
-        "recognition",
-        "Recognition",
-        (
-            "asr.idle_unload_seconds",
-            "asr.cpu_threads",
-            "refine.vocabulary",
-            DIVIDER,
-            "refine.enabled",
-            "refine.host",
-            "refine.model",
-            "refine.min_words",
-            "refine.structured_output",
-        ),
-    ),
-    ("live", "Live", ("live.diarize_mic",)),
-    ("checks", "Checks", ()),
+    ("Text", ("refine.vocabulary", "delivery.copy_original", "delivery.restore_clipboard")),
+    ("Refine", ("refine.enabled", "refine.host", "refine.model")),
+    ("Recording", ("live.diarize_mic", "feedback.spectrum_floor_dbfs")),
+    ("System", ("analytics.enabled", "asr.idle_unload_seconds")),
 )
+SETTINGS_KEYS = tuple(key for _group, keys in SETTINGS_GROUPS for key in keys)
+# The first three groups fill the left column of the wide page.
+_LEFT_GROUPS = 3
+TABS = (("settings", "Settings"), ("checks", "Checks"))
 _CONFIG_ACTIONS = frozenset(
     {
         "previous_key",
@@ -95,22 +66,52 @@ _CONFIG_ACTIONS = frozenset(
         "tab_row",
     }
 )
+# Buttons with a key leave the tab row first when it is too narrow, in this order.
+_DROPPABLE_BUTTONS = ("#config-reset", "#config-undo")
 _ACCENT_BOLD = "bold #5fd7ff"
 _DIM = "#8b93a1"
-_DEFAULT_DEVICE = {"audio.input_device": "Default input", "hotkey.device": "Default device"}
-# The control column of a settings row is wider than the Field default, so
-# "[enter] Edit list… 200 terms" fits. Its left edge: dot slot, gap, label, gap.
+_DEFAULT_DEVICE = {"audio.input_device": "Default input"}
+# Fixed slots: the unsaved count of the message line and the count beside Save.
+_UNSAVED_SLOT = 20
+_COUNT_SLOT = 10
+_WIDE_COLUMNS = 120
+_MEDIUM_COLUMNS = 80
+
+
+def settings_tier(width: int) -> str:
+    """Return ``wide``, ``medium`` or ``narrow`` for a terminal width.
+
+    The hub tier classes replace this once they exist.
+    """
+    if width >= _WIDE_COLUMNS:
+        return "wide"
+    return "medium" if width >= _MEDIUM_COLUMNS else "narrow"
+
+
+def _count_text(count: int) -> str:
+    return f"{count} change{'' if count == 1 else 's'}"
+
+
+class SettingRow(Field):
+    """A settings row whose label column holds the longest setting name."""
+
+    LABEL_WIDTH = 22
+
+
+# The input of a number or text row starts at the control column: dot slot, gap, label, gap.
 _CONTROL_WIDTH = 30
-_CONTROL_OFFSET = 2 + 1 + Field.LABEL_WIDTH + 1
+_CONTROL_OFFSET = 2 + 1 + SettingRow.LABEL_WIDTH + 1
 
 
 class SettingsScreen(HubScreen):
-    """Edit the configuration by tab; the Checks tab runs the system checks.
+    """Edit the configuration on one page; the Checks tab runs the system checks.
 
     Each config row is a ``Field``. ``●`` marks a row whose draft value
-    differs from the saved file. A number or text row edits in an input in
-    the row; while it has focus, letters go to it and only ``escape``,
-    ``enter``, ``tab`` and ``ctrl+s`` act.
+    differs from the saved file. The line under the tabs shows the unsaved
+    count and one message: the newest backup, the default of the selected
+    row, or why the config refused a value. A number or text row edits in an
+    input in the row; while it has focus, letters go to it and only
+    ``escape``, ``enter``, ``tab`` and ``ctrl+s`` act.
     """
 
     SCREEN_TITLE = "Settings"
@@ -129,54 +130,71 @@ class SettingsScreen(HubScreen):
         Binding("tab", "tab_row", "Keep the input and select the next setting", show=False),
     ]
     DEFAULT_CSS = """
-    SettingsScreen #settings-tabs {
-        height: 2;
+    SettingsScreen #settings-panel {
+        height: 1fr;
+        border: round #3a4150;
         padding: 0 1;
     }
-    SettingsScreen #settings-tabs-hint {
+    SettingsScreen #settings-tabs {
+        height: 1;
+    }
+    SettingsScreen #settings-tabs-gap {
         width: 1fr;
-        height: 2;
-        content-align: right bottom;
-        color: #8b93a1;
+        min-width: 1;
+    }
+    SettingsScreen #config-count {
+        width: 10;
+        text-align: right;
     }
     SettingsScreen #config-body {
         height: 1fr;
-        border: round #3a4150;
     }
     SettingsScreen #config-summary {
         height: 1;
-        padding: 0 2;
         text-wrap: nowrap;
         text-overflow: ellipsis;
     }
     SettingsScreen #config-search {
         height: 1;
-        padding: 0 2;
         color: #8b93a1;
         display: none;
     }
+    SettingsScreen #config-rule {
+        height: 1;
+        border-top: solid #3a4150;
+    }
     SettingsScreen #config-rows {
         height: 1fr;
-        padding: 1 2 0 2;
     }
-    SettingsScreen #config-rows Field {
-        margin-bottom: 1;
+    SettingsScreen .config-columns {
+        height: auto;
     }
-    SettingsScreen #config-rows Rule {
-        margin: 0 0 1 0;
-        color: #3a4150;
+    SettingsScreen .config-column {
+        width: 1fr;
+        height: auto;
     }
-    SettingsScreen #config-actions {
-        height: 2;
-        padding: 0 2;
-        border-top: solid #3a4150;
+    SettingsScreen .config-column.-right {
+        margin-left: 4;
+    }
+    SettingsScreen .config-group {
+        height: 1;
+        color: #8b93a1;
+        text-style: bold;
+    }
+    SettingsScreen .config-group.-spaced {
+        margin-top: 1;
+    }
+    SettingsScreen #config-hint {
+        height: 1;
+        color: #8b93a1;
+        text-align: right;
     }
     """
 
     def __init__(self, checks_tab: ChecksTab, **kwargs) -> None:
         super().__init__(**kwargs)
         self.checks_tab = checks_tab
-        self.tab = "general"
+        self.tab = "settings"
         self.editing: str | None = None
         self.row_error: tuple[str, str] | None = None
         self._rows: dict[str, Field] = {}
@@ -185,70 +203,61 @@ class SettingsScreen(HubScreen):
         self._device_labels: dict[str, dict[str, str]] = {}
 
     def compose_body(self) -> ComposeResult:
-        with Horizontal(id="settings-tabs"):
-            for name, _label, _keys in SETTINGS_TABS:
-                tab = HubButton(
-                    self.tab_label(name), action=f"select_tab('{name}')", id=f"tab-{name}"
-                )
-                tab.add_class("-tab")
-                yield tab
-            yield Static("←→ tab", id="settings-tabs-hint", markup=False)
-        with Vertical(id="config-body"):
-            yield Static("", id="config-summary", markup=False)
-            yield Static("", id="config-search", markup=False)
-            yield VerticalScroll(id="config-rows")
-            with Horizontal(id="config-actions"):
+        with Vertical(id="settings-panel"):
+            with Horizontal(id="settings-tabs"):
+                for name, _label in TABS:
+                    yield HubButton(
+                        self.tab_label(name),
+                        action=f"select_tab('{name}')",
+                        tight=True,
+                        id=f"tab-{name}",
+                    )
+                yield Static("", id="settings-tabs-gap")
+                yield HubButton("Undo", key="u", action="undo", tight=True, id="config-undo")
                 yield HubButton(
-                    self._save_label(0),
+                    "Reset row", key="D", action="reset_key", tight=True, id="config-reset"
+                )
+                yield HubButton(
+                    "Discard all", action="discard_all", tight=True, id="config-discard"
+                )
+                yield HubButton(
+                    "Save",
                     key="ctrl+s",
                     action="save",
                     tone="primary",
+                    tight=True,
                     id="config-save",
                 )
-                yield HubButton("Undo", key="u", action="undo", id="config-undo")
-                yield HubButton("Reset row", key="D", action="reset_key", id="config-reset")
-                yield HubButton("Discard all", action="discard_all", id="config-discard")
-        yield self.checks_tab
+                yield Static("", id="config-count", markup=False)
+            with Vertical(id="config-body"):
+                yield Static("", id="config-summary", markup=False)
+                yield Static("", id="config-search", markup=False)
+                yield Static("", id="config-rule")
+                yield VerticalScroll(id="config-rows")
+                yield Static(
+                    "↑↓ select · ←→ tab · enter edit · space toggle", id="config-hint", markup=False
+                )
+            yield self.checks_tab
 
     def on_mount(self) -> None:
         editor = self.app.config_editor
-        if self.tab != "checks" and editor.shown_keys is None:
-            editor.show_keys(self.tab_keys(self.tab))
+        if editor.shown_keys is None:
+            editor.show_keys(SETTINGS_KEYS)
         self._sync_tab_widgets()
 
-    @staticmethod
-    def tab_of(dotted_key: str) -> str:
-        """Return the tab that holds a dotted config key."""
-        group = dotted_key.partition(".")[0]
-        for name, _label, patterns in SETTINGS_TABS:
-            if dotted_key in patterns or f"{group}.*" in patterns:
-                return name
-        raise KeyError(dotted_key)
+    @property
+    def tier(self) -> str:
+        return settings_tier(self.app.size.width)
 
-    def tab_keys(self, tab: str) -> tuple[str, ...]:
-        """Return the keys of a tab in the order of its mapping."""
-        return tuple(key for key in self._tab_layout(tab) if key != DIVIDER)
-
-    def _tab_layout(self, tab: str) -> tuple[str, ...]:
-        keys = self.app.config_editor.all_keys
-        patterns = next(patterns for name, _label, patterns in SETTINGS_TABS if name == tab)
-        layout: list[str] = []
-        for pattern in patterns:
-            if pattern == DIVIDER:
-                layout.append(DIVIDER)
-            elif pattern.endswith(".*"):
-                layout.extend(key for key in keys if key.startswith(pattern[:-1]))
-            elif pattern in keys:
-                layout.append(pattern)
-        return tuple(layout)
+    def on_resize(self) -> None:
+        if self.ready:
+            self.app.refresh_view()
 
     def select_tab(self, tab: str) -> None:
         """Show one tab; unsaved changes stay."""
         if not self._commit_input():
             return
         self.tab = tab
-        if tab != "checks":
-            self.app.config_editor.show_keys(self.tab_keys(tab))
         if self.ready:
             self._sync_tab_widgets()
         checks = self.checks_tab
@@ -257,24 +266,24 @@ class SettingsScreen(HubScreen):
         self.app.refresh_view()
 
     def _sync_tab_widgets(self) -> None:
-        self.checks_tab.display = self.tab == "checks"
-        self.query_one("#config-body").display = self.tab != "checks"
-        for name, _label, _keys in SETTINGS_TABS:
-            tab = self.query_one(f"#tab-{name}", HubButton)
-            tab.set_class(name == self.tab, "-selected")
-            tab.set_label(self.tab_label(name))
-        if self.tab == "checks":
-            self.checks_tab.focus()
-        else:
+        config_tab = self.tab != "checks"
+        self.checks_tab.display = not config_tab
+        self.query_one("#config-body").display = config_tab
+        for name, _label in TABS:
+            self.query_one(f"#tab-{name}", HubButton).set_label(self.tab_label(name))
+        if config_tab:
             self.set_focus(None)
+        else:
+            self.checks_tab.focus()
 
     def tab_label(self, tab: str) -> Text:
-        """Return the printed tab label: ``▶`` marks the active tab without colour.
+        """Return the printed tab label: ``▶`` marks the active tab, not colour alone.
 
         Each other tab keeps two blank cells there, so a tab change moves no tab.
         """
-        label = Text("▶ " if tab == self.tab else "  ")
-        label.append(next(text for name, text, _keys in SETTINGS_TABS if name == tab))
+        selected = tab == self.tab
+        label = Text("▶ " if selected else "  ", style=_ACCENT_BOLD if selected else "")
+        label.append(dict(TABS)[tab], style=_ACCENT_BOLD if selected else "")
         report = self.checks_tab.report
         if tab == "checks" and report is not None and (report.warn_count or report.fail_count):
             count = report.warn_count + report.fail_count
@@ -284,9 +293,12 @@ class SettingsScreen(HubScreen):
         return label
 
     def open_setting(self, dotted_key: str) -> None:
-        """Select the tab of a dotted key and its row."""
-        self.select_tab(self.tab_of(dotted_key))
-        self.app.config_editor.select(dotted_key)
+        """Show the Settings tab with the row of a dotted key selected."""
+        self.select_tab("settings")
+        editor = self.app.config_editor
+        if editor.search_term or editor.shown_keys != SETTINGS_KEYS:
+            editor.show_keys(SETTINGS_KEYS)
+        editor.select(dotted_key)
         self.app.refresh_view()
 
     def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
@@ -299,33 +311,65 @@ class SettingsScreen(HubScreen):
     def refresh_body(self) -> None:
         app = self.app
         self.query_one("#tab-checks", HubButton).set_label(self.tab_label("checks"))
-        if self.tab == "checks":
+        editor = app.config_editor
+        config_tab = self.tab != "checks"
+        tier = self.tier
+        for selector in ("#config-undo", "#config-reset", "#config-discard", "#config-save"):
+            self.query_one(selector).display = config_tab and not editor.read_only
+        count_slot = self.query_one("#config-count", Static)
+        count_slot.display = config_tab and not editor.read_only and tier == "wide"
+        if not config_tab:
             self.checks_tab.refresh_view()
             return
-        editor = app.config_editor
         if editor.shown_keys is None and not editor.read_only:
-            editor.show_keys(self.tab_keys(self.tab))
-        self._sync_rows(editor)
-        actions = self.query_one("#config-actions")
-        actions.display = not editor.read_only
+            editor.show_keys(SETTINGS_KEYS)
+        self._sync_rows(editor, tier)
         summary = self.query_one("#config-summary", Static)
         summary.display = not editor.read_only
         search = self.query_one("#config-search", Static)
         search.display = bool(editor.search_term)
+        self.query_one("#config-hint").display = tier == "wide"
         if editor.read_only:
             return
+        self._fit_tab_row(tier)
         search.update(f"search: {editor.search_term} · esc clears")
         self._update_rows(editor)
         count = editor.unsaved_change_count
-        self.query_one("#config-save", HubButton).set_label(self._save_label(count))
-        update_changed(summary, self._config_summary(editor))
+        update_changed(count_slot, _count_text(count) if count else "")
+        update_changed(summary, self._config_summary(editor, tier))
 
-    def _sync_rows(self, editor: ConfigEditor) -> None:
-        """Mount one Field per visible key when the visible keys change."""
+    def _fit_tab_row(self, tier: str) -> None:
+        """Hide the buttons that have a key, Reset row first, until the tab row fits."""
+        gap = 3 if tier == "wide" else 2
+        row = self.query_one("#settings-tabs")
+        shown = list(row.query(HubButton))
+        for button in shown:
+            button.styles.margin = (0, 0 if button.id == "config-save" else gap, 0, 0)
+        for selector in _DROPPABLE_BUTTONS:
+            self.query_one(selector).display = True
+        width = row.content_size.width or self.app.size.width
+        count = _COUNT_SLOT if self.query_one("#config-count").display else 0
+        needed = (
+            count
+            + 1
+            + sum(
+                button.label.cell_length + (0 if button.id == "config-save" else gap)
+                for button in shown
+            )
+        )
+        for selector in _DROPPABLE_BUTTONS:
+            if needed <= width:
+                break
+            button = self.query_one(selector, HubButton)
+            button.display = False
+            needed -= button.label.cell_length + gap
+
+    def _sync_rows(self, editor: ConfigEditor, tier: str) -> None:
+        """Mount the group heads and one Field per shown key when the page changes."""
         if editor.read_only:
             signature: tuple[object, ...] = (id(editor), editor.error_text())
         else:
-            signature = (id(editor), editor.visible_keys, editor.search_term)
+            signature = (id(editor), editor.visible_keys, editor.search_term, tier)
         if signature == self._row_signature:
             return
         self._row_signature = signature
@@ -337,32 +381,47 @@ class SettingsScreen(HubScreen):
         if editor.read_only:
             container.mount(Static(editor.error_text(), id="config-message", markup=False))
             return
-        layout = editor.visible_keys if editor.search_term else self._tab_layout(self.tab)
-        widgets = []
-        for key in layout:
-            if key == DIVIDER:
-                if widgets:
-                    widgets.append(Rule())
+        shown = set(editor.visible_keys)
+        groups = []
+        for index, (group, keys) in enumerate(SETTINGS_GROUPS):
+            rows = [key for key in keys if key in shown]
+            if not rows:
                 continue
-            field = Field(editor.label(key), "")
-            self._rows[key] = field
-            widgets.append(field)
-        container.mount_all(widgets)
+            head = Static(group.upper(), markup=False)
+            head.add_class("config-group", f"group-{group.lower()}")
+            widgets: list[Static] = [head]
+            for key in rows:
+                field = SettingRow(editor.label(key), "")
+                self._rows[key] = field
+                widgets.append(field)
+            groups.append((index, widgets))
+        if tier == "wide":
+            left = [group for group in groups if group[0] < _LEFT_GROUPS]
+            right = [group for group in groups if group[0] >= _LEFT_GROUPS]
+            container.mount(
+                Horizontal(
+                    Vertical(*self._spaced(left, spaced=True), classes="config-column"),
+                    Vertical(*self._spaced(right, spaced=True), classes="config-column -right"),
+                    classes="config-columns",
+                )
+            )
+        else:
+            container.mount_all(self._spaced(groups, spaced=tier == "medium"))
+
+    @staticmethod
+    def _spaced(groups: list[tuple[int, list[Static]]], *, spaced: bool) -> list[Static]:
+        """Join groups into one list; ``spaced`` leaves an empty line above each later head."""
+        widgets: list[Static] = []
+        for position, (_index, members) in enumerate(groups):
+            if spaced and position:
+                members[0].add_class("-spaced")
+            widgets.extend(members)
+        return widgets
 
     def _update_rows(self, editor: ConfigEditor) -> None:
         selected = editor.selected_key
         for key, field in self._rows.items():
             focused = key == selected
-            note = ""
-            if self.row_error is not None and key == self.row_error[0]:
-                note = f"{DOCTOR_STATE_GLYPHS['fail']} {self.row_error[1]}"
-                if key == self.editing:
-                    note += " · esc cancels"
-            elif key == self.editing:
-                note = "editing"
-            elif editor.value(key) != editor.default(key):
-                note = f"default {self._value_text(editor, key, editor.default(key))}"
-            field.note = note
             field.set_value(
                 self._control(editor, key, focused), changed=editor.is_changed(key), focused=focused
             )
@@ -390,7 +449,7 @@ class SettingsScreen(HubScreen):
         text = self._value_text(editor, key, value)
         if kind in {"choice", "device"}:
             return Text(f"{text} ▾", style=style)
-        return Text(text, style=style)
+        return Text(text, style=style, no_wrap=True, overflow="ellipsis")
 
     def _value_text(self, editor: ConfigEditor, key: str, value: object) -> str:
         if editor.kind(key) == "list":
@@ -403,31 +462,42 @@ class SettingsScreen(HubScreen):
             return "(none)"
         return editor.format_value(value)
 
-    @staticmethod
-    def _save_label(count: int) -> str:
-        return f"Save {count} change{'' if count == 1 else 's'}"
-
-    def _config_summary(self, editor: ConfigEditor) -> Text:
+    def _config_summary(self, editor: ConfigEditor, tier: str) -> Text:
+        """Return the message line: file, unsaved count slot and one message."""
         count = editor.unsaved_change_count
-        suffix = "" if count == 1 else "s"
-        summary = Text(f"{editor.path.name} · ", no_wrap=True)
+        summary = Text("" if tier == "narrow" else f"{editor.path.name} · ", no_wrap=True)
+        unsaved = f"● {count} unsaved {_count_text(count)[len(str(count)) + 1 :]}"
         summary.append(
-            f"● {count} unsaved change{suffix}" if count else "0 unsaved changes",
+            (unsaved if count else unsaved[2:]).ljust(_UNSAVED_SLOT),
             style=StatusToken.TONES["warn"] if count else StatusToken.TONES["dim"],
         )
-        summary.append(" · backups ")
+        summary.append("· ", style=StatusToken.TONES["dim"])
+        summary.append_text(self._message(editor))
+        return summary
+
+    def _message(self, editor: ConfigEditor) -> Text:
+        """Return the refusal of an input, else the default of the selected row, else the backup."""
+        if self.row_error is not None:
+            key, reason = self.row_error
+            glyph = DOCTOR_STATE_GLYPHS["fail"]
+            return Text(f"{glyph} {editor.label(key)} {reason}", style=StatusToken.TONES["danger"])
+        key = editor.selected_key
+        if key is not None and editor.value(key) != editor.default(key):
+            default = self._value_text(editor, key, editor.default(key))
+            return Text(f"default {default}", style=StatusToken.TONES["dim"])
+        message = Text("backups ")
         backups = editor.backups()
         if not backups:
-            summary.append("none yet", style=StatusToken.TONES["dim"])
-            return summary
+            message.append("none yet", style=StatusToken.TONES["dim"])
+            return message
         newest = backups[-1]
-        summary.append(f"{newest.name} · ")
+        message.append(f"{newest.name} · ")
         try:
             stamp = datetime.datetime.fromtimestamp(newest.stat().st_mtime).strftime("%H:%M")
         except OSError:
             stamp = "—"
-        summary.append(f"last {stamp}", style=StatusToken.TONES["dim"])
-        return summary
+        message.append(f"last {stamp}", style=StatusToken.TONES["dim"])
+        return message
 
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
         if self.typing:
@@ -435,25 +505,21 @@ class SettingsScreen(HubScreen):
         if self.tab == "checks":
             return (("←→", "tab"), *self.checks_tab.footer_hints())
         return (
-            ("←→", "tab"),
-            ("↑↓", "row"),
             ("enter", "edit"),
             ("space", "toggle"),
+            ("ctrl+s", "save"),
             ("u", "undo"),
             ("D", "reset"),
-            ("ctrl+s", "save"),
             ("/", "search"),
+            ("←→", "tab"),
+            ("↑↓", "row"),
         )
 
     # Device lists
 
-    def list_devices(self, dotted_key: str) -> list[tuple[str, str]]:
-        """Return ``(value, label)`` of each device the sound or input server lists."""
-        if dotted_key == "audio.input_device":
-            return self.app.services.input_devices()
-        from stenographer.lib.platform import current_platform
-
-        return current_platform().hotkey_devices()
+    def list_devices(self, _dotted_key: str) -> list[tuple[str, str]]:
+        """Return ``(value, label)`` of each microphone the sound server lists."""
+        return self.app.services.input_devices()
 
     # Actions
 
@@ -462,7 +528,7 @@ class SettingsScreen(HubScreen):
         return None if editor.read_only else editor
 
     def action_move_tab(self, offset: int) -> None:
-        names = [name for name, _label, _keys in SETTINGS_TABS]
+        names = [name for name, _label in TABS]
         self.select_tab(names[(names.index(self.tab) + offset) % len(names)])
 
     def action_select_tab(self, tab: str) -> None:
@@ -575,7 +641,7 @@ class SettingsScreen(HubScreen):
             initial, type=input_type, compact=True, select_on_focus=False, id="config-input"
         )
         fit_input_to_row(editor_input)
-        editor_input.styles.width = _CONTROL_WIDTH
+        editor_input.styles.width = max(1, min(_CONTROL_WIDTH, field.size.width - _CONTROL_OFFSET))
         editor_input.styles.margin = (0, 0, 0, _CONTROL_OFFSET)
         self.editing = key
         self.app.refresh_view()
@@ -638,7 +704,7 @@ class SettingsScreen(HubScreen):
             return
         editor = self._editor()
         if editor is not None and editor.clear_search():
-            editor.show_keys(self.tab_keys(self.tab))
+            editor.show_keys(SETTINGS_KEYS)
             self.app.refresh_view()
 
     def action_tab_row(self) -> None:
@@ -668,7 +734,7 @@ class SettingsScreen(HubScreen):
             return
         if not editor.search(term):
             self.app.notify(f"No settings match {term!r}.", severity="warning")
-            editor.show_keys(self.tab_keys(self.tab))
+            editor.show_keys(SETTINGS_KEYS)
         self.app.refresh_view()
 
     def action_discard_all(self) -> None:

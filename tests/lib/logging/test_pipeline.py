@@ -11,7 +11,6 @@ from io import StringIO
 import pytest
 
 from stenographer.lib.logging.pipeline import (
-    apply_stderr_level,
     fmt_event,
     log_failure,
     log_paths,
@@ -444,16 +443,8 @@ def _stderr_level() -> int:
     return handler.level
 
 
-def test_the_process_override_outranks_the_configured_stderr_level(tmp_path):
-    """``STENOGRAPHER_LOG_LEVEL`` is resolved before any config exists and stays.
-
-    Seen to FAIL against an ``apply_stderr_level`` that always re-applied the
-    configured level: the operator's ``STENOGRAPHER_LOG_LEVEL=WARNING`` was
-    silently replaced by ``feedback.log_level`` a moment later.
-    """
-    from stenographer.lib.logging import pipeline as pipeline_module
-
-    pinned = pipeline_module._stderr_level_pinned
+def test_the_stderr_level_is_the_process_override_or_info(tmp_path):
+    """``STENOGRAPHER_LOG_LEVEL`` sets the stderr threshold; without it, INFO."""
     shutdown_logging()
     stream = StringIO()
     try:
@@ -463,33 +454,16 @@ def test_the_process_override_outranks_the_configured_stderr_level(tmp_path):
             stderr=stream,
         )
         assert _stderr_level() == logging.WARNING
-
-        apply_stderr_level("DEBUG")
-        assert _stderr_level() == logging.WARNING
-
-        logger.info(fmt_event("test", "info_under_pin"))
-        logger.warning(fmt_event("test", "warning_under_pin"))
+        logger.info(fmt_event("test", "info_under_override"))
+        logger.warning(fmt_event("test", "warning_under_override"))
         shutdown_logging()
+        assert "test: warning_under_override" in stream.getvalue()
+        assert "test: info_under_override" not in stream.getvalue()
 
-        assert "test: warning_under_pin" in stream.getvalue()
-        assert "test: info_under_pin" not in stream.getvalue()
-
-        configured = StringIO()
-        logger = setup_logging(
-            env={"XDG_STATE_HOME": str(tmp_path)}, home=tmp_path, stderr=configured
-        )
+        setup_logging(env={"XDG_STATE_HOME": str(tmp_path)}, home=tmp_path, stderr=StringIO())
         assert _stderr_level() == logging.INFO
-
-        apply_stderr_level("debug")
-        assert _stderr_level() == logging.DEBUG
-
-        logger.debug(fmt_event("test", "debug_after_config"))
-        shutdown_logging()
-
-        assert "test: debug_after_config" in configured.getvalue()
     finally:
         shutdown_logging()
-        pipeline_module._stderr_level_pinned = pinned
 
 
 def test_worker_logging_replaces_child_handlers_with_one_forwarder():

@@ -8,8 +8,9 @@ import pytest
 from stenographer.lib.config.models import Config
 from stenographer.lib.refine import ollama_refiner
 from stenographer.lib.refine.client import installed_model_names
+from stenographer.lib.refine.factory import MIN_WORDS
 from stenographer.lib.refine.ollama_refiner import OllamaRefiner
-from stenographer.lib.refine.prompt import RESPONSE_KEY
+from stenographer.lib.refine.prompt import DEFAULT_STRUCTURED_OUTPUT, RESPONSE_KEY
 
 SPOKEN = "um i think we should ship it on thursday no wait friday okay "
 CLEANED = "I think we should ship it on Friday. "
@@ -80,8 +81,8 @@ def installed_refiner() -> OllamaRefiner:
     built = OllamaRefiner(
         host=section.host,
         model=section.model,
-        min_words=section.min_words,
-        structured_output=section.structured_output,
+        min_words=MIN_WORDS,
+        structured_output=DEFAULT_STRUCTURED_OUTPUT,
         keep_alive=Config.defaults().asr.idle_unload_seconds,
     )
     if not built.warm():

@@ -580,7 +580,7 @@ async def test_footer_hints_fit_on_every_screen_at_120_columns(tmp_path):
 async def test_settings_rows_show_no_description_and_values_use_the_free_width(tmp_path):
     services, _created = _services(tmp_path)
     app = _app(tmp_path, services)
-    async with app.run_test(size=(150, 45)) as pilot:
+    async with app.run_test(size=(100, 45)) as pilot:
         await pilot.press("3")
         await pilot.pause()
         # Label, marks and value only: the row ends with its value.
@@ -592,20 +592,20 @@ async def test_settings_rows_show_no_description_and_values_use_the_free_width(t
         for sentence in ("Agent binding", "Playback volume", "applies to new sessions"):
             assert sentence not in text
 
-        long_value = "alpha-" * 12
+        long_value = "alpha-" * 10
         row.set_value(long_value, changed=False)
         await pilot.pause()
         assert long_value in _screen_text(app), "a value without a note stays on one row"
 
 
-async def test_settings_row_shows_the_word_editing_while_its_input_is_open(tmp_path):
+async def test_settings_row_shows_no_note_while_its_input_is_open(tmp_path):
     services, _created = _services(tmp_path)
     app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("3", "enter")
         await pilot.pause()
         row = next(line for line in _screen_text(app).splitlines() if "Agent key" in line)
-        assert row.split("│")[1].split()[-1] == "editing"
+        assert "editing" not in row
         assert "enter keeps" not in row
         await pilot.press("escape")
         await pilot.pause()
@@ -622,4 +622,4 @@ async def test_settings_config_summary_is_the_first_row_of_the_panel(tmp_path):
         summary = app.screen.query_one("#config-summary", Static)
         assert summary.region.y == app.screen.query_one("#config-body").content_region.y
         assert summary.region.y < app.screen.query_one("#config-rows").region.y
-        assert str(summary.render()) == "config.toml · 0 unsaved changes · backups none yet"
+        assert str(summary.render()) == "config.toml · 0 unsaved changes   · backups none yet"

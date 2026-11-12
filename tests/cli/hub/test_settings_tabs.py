@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pilot tests for the Settings tabs: Field rows, the unsaved model and keys."""
+"""Pilot tests for the Settings page: Field rows, the unsaved model and keys."""
 
 from __future__ import annotations
 
@@ -30,44 +30,6 @@ class IdleServices:
         self.config = config
 
 
-TAB_KEYS = {
-    "general": (
-        "hotkey.binding",
-        "hotkey.device",
-        "hotkey.cancel_binding",
-        "hotkey.mode",
-        "hotkey.hybrid_threshold_seconds",
-        "hotkey.general_binding",
-        "feedback.volume",
-        "feedback.mute",
-        "feedback.overlay",
-        "feedback.sound_pack",
-        "feedback.log_level",
-        "delivery.copy_original",
-        "delivery.restore_clipboard",
-        "delivery.restore_delay_ms",
-        "analytics.enabled",
-        "analytics.resource_profiling",
-    ),
-    "audio": (
-        "audio.input_device",
-        "audio.max_recording_seconds",
-        "feedback.spectrum_floor_dbfs",
-    ),
-    "recognition": (
-        "asr.idle_unload_seconds",
-        "asr.cpu_threads",
-        "refine.vocabulary",
-        "refine.enabled",
-        "refine.host",
-        "refine.model",
-        "refine.min_words",
-        "refine.structured_output",
-    ),
-    "live": ("live.diarize_mic",),
-}
-
-
 def _app(tmp_path, content=None, devices=None):
     app = HubApp(IdleServices(), config_editor=ConfigEditor(_config_path(tmp_path, content)))
     app.settings_screen.list_devices = lambda _key: list(devices or ())
@@ -88,9 +50,11 @@ def _screen_text(app) -> str:
     return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
 
 
-async def _open(pilot, tab="general"):
+async def _open(pilot, key=None):
+    """Show Settings; with ``key``, select the row of that dotted key."""
     await pilot.press("3")
-    pilot.app.settings_screen.select_tab(tab)
+    if key is not None:
+        pilot.app.settings_screen.open_setting(key)
     await pilot.pause()
 
 
@@ -104,55 +68,26 @@ async def _select(pilot, label):
     raise AssertionError(f"no row {label}")
 
 
-async def test_settings_each_key_sits_in_its_tab_as_one_field_row(tmp_path):
+async def test_settings_each_key_sits_on_the_page_as_one_field_row(tmp_path):
     app = _app(tmp_path)
     async with app.run_test(size=(150, 45)) as pilot:
         await _open(pilot)
-        every_key = set(app.config_editor.all_keys)
-        seen = set()
-        for tab, keys in TAB_KEYS.items():
-            app.settings_screen.select_tab(tab)
-            await pilot.pause()
-            assert app.config_editor.visible_keys == keys
-            assert len(_fields(app)) == len(keys)
-            seen.update(keys)
-        assert seen == every_key
-
-        app.settings_screen.select_tab("recognition")
-        await pilot.pause()
-        labels = [field.label for field in _fields(app)]
-        assert labels == [
-            "Idle unload",
-            "CPU threads",
-            "Vocabulary",
-            "Refine",
-            "Host",
-            "Model",
-            "Minimum words",
-            "Structured output",
-        ]
-        text = _screen_text(app)
-        assert "▶ Recognition" in text
+        assert set(app.config_editor.visible_keys) == set(app.config_editor.all_keys)
+        assert len(_fields(app)) == len(app.config_editor.all_keys)
+        assert "▶ Settings" in _screen_text(app)
 
 
 def test_settings_rows_draw_the_control_that_fits_the_key(tmp_path):
-    assert Config.defaults().refine.structured_output is False
-
     async def exercise():
         app = _app(tmp_path)
         async with app.run_test(size=(150, 45)) as pilot:
-            await _open(pilot, "recognition")
+            await _open(pilot)
             assert _plain(_field(app, "Idle unload")).strip() == "900 s"
             assert _plain(_field(app, "Refine")) == "(●) on"
-            assert _plain(_field(app, "Structured output")) == "( ) off"
+            assert _plain(_field(app, "Separate room speakers")) == "( ) off"
             assert _plain(_field(app, "Vocabulary")) == "[enter] Edit list… 0 terms"
             assert _plain(_field(app, "Model")) == Config.defaults().refine.model
-            app.settings_screen.select_tab("general")
-            await pilot.pause()
             assert _plain(_field(app, "Hotkey mode")) == "hybrid ▾"
-            assert _plain(_field(app, "Log level")) == "info ▾"
-            app.settings_screen.select_tab("audio")
-            await pilot.pause()
             assert _plain(_field(app, "Microphone")) == "Default input ▾"
 
     asyncio.run(exercise())
@@ -161,7 +96,7 @@ def test_settings_rows_draw_the_control_that_fits_the_key(tmp_path):
 async def test_settings_number_row_rejects_letters_and_marks_the_unsaved_change(tmp_path):
     app = _app(tmp_path)
     async with app.run_test(size=(150, 45)) as pilot:
-        await _open(pilot, "recognition")
+        await _open(pilot, "asr.idle_unload_seconds")
         assert not any(field.changed for field in _fields(app))
         await pilot.press("enter")
         await pilot.pause()
@@ -176,27 +111,27 @@ async def test_settings_number_row_rejects_letters_and_marks_the_unsaved_change(
         row = _field(app, "Idle unload")
         assert row.changed and _plain(row).strip() == "60 s"
         assert "● 1 unsaved change" in _screen_text(app)
-        assert "[ctrl+s] Save 1 change" in _screen_text(app)
+        assert "[ctrl+s] Save 1 change" in _screen_text(app).replace("  ", " ")
 
 
 def test_settings_dot_marks_a_change_from_the_saved_file_not_the_default(tmp_path):
-    content = default_toml().replace("cpu_threads = 0", "cpu_threads = 5")
+    content = default_toml().replace("idle_unload_seconds = 900", "idle_unload_seconds = 5")
 
     async def exercise():
         app = _app(tmp_path, content)
         async with app.run_test(size=(150, 45)) as pilot:
-            await _open(pilot, "recognition")
-            row = _field(app, "CPU threads")
+            await _open(pilot, "asr.idle_unload_seconds")
+            row = _field(app, "Idle unload")
             assert not row.changed
-            assert "●" not in _screen_text(app).split("CPU threads")[0].splitlines()[-1]
-            await pilot.press("down", "shift+d")
+            assert "●" not in _screen_text(app).split("Idle unload")[0].splitlines()[-1]
+            await pilot.press("shift+d")
             await pilot.pause()
-            assert app.config_editor.config.asr.cpu_threads == 0
-            assert _field(app, "CPU threads").changed
+            assert app.config_editor.config.asr.idle_unload_seconds == 900
+            assert _field(app, "Idle unload").changed
             await pilot.press("u")
             await pilot.pause()
-            assert app.config_editor.config.asr.cpu_threads == 5
-            assert not _field(app, "CPU threads").changed
+            assert app.config_editor.config.asr.idle_unload_seconds == 5
+            assert not _field(app, "Idle unload").changed
 
     asyncio.run(exercise())
 
@@ -205,18 +140,17 @@ async def test_settings_space_toggles_and_undo_reset_and_discard_all(tmp_path):
     path = _config_path(tmp_path)
     app = HubApp(IdleServices(), config_editor=ConfigEditor(path))
     async with app.run_test(size=(150, 45)) as pilot:
-        await _open(pilot, "recognition")
-        await _select(pilot, "Refine")
+        await _open(pilot, "refine.enabled")
         await pilot.press("space")
         await pilot.pause()
         assert app.config_editor.config.refine.enabled is False
         assert _plain(_field(app, "Refine")) == "( ) off"
-        await pilot.press("down", "down", "down", "down", "space")
+        await pilot.press("down", "down", "down", "space")
         await pilot.pause()
         assert app.config_editor.unsaved_change_count == 2
         await pilot.press("u")
         assert app.config_editor.unsaved_change_count == 1
-        await _select(pilot, "Refine")
+        app.settings_screen.open_setting("refine.enabled")
         await pilot.press("shift+d")
         await pilot.pause()
         assert app.config_editor.config.refine.enabled is True
@@ -256,7 +190,7 @@ def test_settings_choice_and_device_rows_open_their_lists(tmp_path):
             assert app.config_editor.config.hotkey.mode == "toggle"
             assert _field(app, "Hotkey mode").changed
 
-            app.settings_screen.select_tab("audio")
+            app.settings_screen.open_setting("audio.input_device")
             await pilot.pause()
             await pilot.press("enter")
             await pilot.pause()
@@ -275,29 +209,31 @@ def test_settings_choice_and_device_rows_open_their_lists(tmp_path):
 
 
 def test_settings_save_keeps_a_backup_and_a_comment(tmp_path):
-    content = "# my note about threads\n" + default_toml()
+    content = "# my note about unload\n" + default_toml()
 
     async def exercise():
         path = _config_path(tmp_path, content)
         app = HubApp(IdleServices(), config_editor=ConfigEditor(path))
         async with app.run_test(size=(150, 45)) as pilot:
-            await _open(pilot, "recognition")
+            await _open(pilot, "asr.idle_unload_seconds")
             assert "backups none yet" in app.screen.query_one("#config-summary").render().plain
-            await pilot.press("down", "enter", "ctrl+a", "ctrl+k", "3", "enter")
+            await pilot.press("enter", "ctrl+a", "ctrl+k", "3", "enter")
             await pilot.press("ctrl+s")
             await pilot.pause()
-            assert Config.load(path).asr.cpu_threads == 3
+            assert Config.load(path).asr.idle_unload_seconds == 3
             assert app.services.config == Config.load(path)
             assert not app.config_editor.dirty
-            assert path.read_text(encoding="utf-8").startswith("# my note about threads\n")
+            assert path.read_text(encoding="utf-8").startswith("# my note about unload\n")
             backups = list(tmp_path.glob("config.toml.bak-*"))
             assert len(backups) == 1
             assert backups[0].read_text(encoding="utf-8") == content
-            assert not _field(app, "CPU threads").changed
+            assert not _field(app, "Idle unload").changed
+            app.settings_screen.open_setting("hotkey.binding")
+            await pilot.pause()
             summary = app.screen.query_one("#config-summary").render().plain
             assert "0 unsaved changes" in summary
             assert f"backups {backups[0].name} · last " in summary
-            assert "[ctrl+s] Save 0 changes" in _screen_text(app)
+            assert "changes" not in app.screen.query_one("#config-count").render().plain
 
     asyncio.run(exercise())
 
@@ -306,7 +242,7 @@ async def test_settings_ctrl_s_saves_the_value_typed_in_the_row(tmp_path):
     path = _config_path(tmp_path)
     app = HubApp(IdleServices(), config_editor=ConfigEditor(path))
     async with app.run_test(size=(150, 45)) as pilot:
-        await _open(pilot, "recognition")
+        await _open(pilot, "asr.idle_unload_seconds")
         await pilot.press("enter", "ctrl+a", "ctrl+k", "7", "5", "ctrl+s")
         await pilot.pause()
         assert Config.load(path).asr.idle_unload_seconds == 75
@@ -315,15 +251,14 @@ async def test_settings_ctrl_s_saves_the_value_typed_in_the_row(tmp_path):
 async def test_settings_letters_go_to_a_focused_text_input(tmp_path):
     app = _app(tmp_path)
     async with app.run_test(size=(150, 45)) as pilot:
-        await _open(pilot, "recognition")
-        await _select(pilot, "Model")
+        await _open(pilot, "refine.model")
         await pilot.press("enter")
         await pilot.pause()
         await pilot.press("ctrl+a", "ctrl+k", *"Du/1q", "space", "x")
         await pilot.pause()
         assert app.screen.focused.value == "Du/1q x"
         assert app.current_mode == "settings" and app.is_running
-        assert app.settings_screen.tab == "recognition"
+        assert app.settings_screen.tab == "settings"
         assert not app.config_editor.dirty
         await pilot.press("escape")
         await pilot.pause()
@@ -335,38 +270,39 @@ async def test_settings_letters_go_to_a_focused_text_input(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("key", "tab", "label"),
+    ("key", "label"),
     [
-        ("hotkey.mode", "general", "Hotkey mode"),
-        ("audio.max_recording_seconds", "audio", "Longest recording"),
-        ("refine.model", "recognition", "Model"),
-        ("live.diarize_mic", "live", "Separate room speakers"),
+        ("hotkey.mode", "Hotkey mode"),
+        ("feedback.spectrum_floor_dbfs", "Meter floor dBFS"),
+        ("refine.model", "Model"),
+        ("live.diarize_mic", "Separate room speakers"),
     ],
 )
-async def test_settings_open_setting_selects_the_row_on_each_tab(tmp_path, key, tab, label):
+async def test_settings_open_setting_selects_the_row(tmp_path, key, label):
     app = _app(tmp_path)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         app.config_editor.edit("hotkey.binding", "KEY_F9")
         app.open_setting(key)
         await pilot.pause()
-        assert app.settings_screen.tab == tab
+        assert app.settings_screen.tab == "settings"
         assert app.config_editor.selected_key == key
         assert [field.label for field in _fields(app) if field.focused] == [label]
         assert app.config_editor.config.hotkey.binding == "KEY_F9"
 
 
-async def test_settings_search_finds_names_across_tabs_and_escape_clears(tmp_path):
+async def test_settings_search_finds_names_and_escape_clears(tmp_path):
     app = _app(tmp_path)
     async with app.run_test(size=(150, 45)) as pilot:
         await _open(pilot)
-        await pilot.press("slash", *"threads", "enter")
+        await pilot.press("slash", *"unload", "enter")
         await pilot.pause()
-        assert [field.label for field in _fields(app)] == ["CPU threads"]
-        assert "search: threads" in _screen_text(app)
+        assert [field.label for field in _fields(app)] == ["Idle unload"]
+        assert "search: unload" in _screen_text(app)
+        assert "SYSTEM" in _screen_text(app) and "KEYS" not in _screen_text(app)
         await pilot.press("escape")
         await pilot.pause()
-        assert app.config_editor.visible_keys == TAB_KEYS["general"]
+        assert set(app.config_editor.visible_keys) == set(app.config_editor.all_keys)
 
 
 async def test_settings_footer_and_buttons_print_their_keys(tmp_path):
@@ -374,7 +310,7 @@ async def test_settings_footer_and_buttons_print_their_keys(tmp_path):
     async with app.run_test(size=(150, 45)) as pilot:
         await _open(pilot)
         text = _screen_text(app)
-        for label in ("[ctrl+s] Save 0 changes", "[u] Undo", "[D] Reset row", "Discard all"):
+        for label in ("[ctrl+s] Save", "[u] Undo", "[D] Reset row", "Discard all"):
             assert label in text
         hints = text.splitlines()[-1]
         assert "space toggle" in hints and "D reset" in hints
@@ -383,38 +319,37 @@ async def test_settings_footer_and_buttons_print_their_keys(tmp_path):
 async def test_settings_click_selects_a_row_and_a_second_click_edits_it(tmp_path):
     app = _app(tmp_path)
     async with app.run_test(size=(150, 45)) as pilot:
-        await _open(pilot, "recognition")
-        await pilot.click(_field(app, "CPU threads"))
+        await _open(pilot)
+        await pilot.click(_field(app, "Idle unload"))
         await pilot.pause()
-        assert app.config_editor.selected_key == "asr.cpu_threads"
+        assert app.config_editor.selected_key == "asr.idle_unload_seconds"
         assert not app.screen.query(Input)
-        await pilot.click(_field(app, "CPU threads"))
+        await pilot.click(_field(app, "Idle unload"))
         await pilot.pause()
-        assert app.settings_screen.editing == "asr.cpu_threads"
+        assert app.settings_screen.editing == "asr.idle_unload_seconds"
         assert isinstance(app.screen.focused, Input)
 
 
-def _row_text(app, label: str) -> str:
-    return next(line for line in _screen_text(app).splitlines() if label in line)
+def _message(app) -> str:
+    return app.screen.query_one("#config-summary").render().plain
 
 
 @pytest.mark.parametrize(
-    ("tab", "label", "typed", "error"),
+    ("key", "label", "typed", "error"),
     [
-        ("recognition", "Idle unload", (), f"{FAIL} enter a number"),
-        ("recognition", "Model", (), f"{FAIL} must be non-empty"),
-        ("recognition", "Host", tuple("ftp://x"), f"{FAIL} "),
+        ("asr.idle_unload_seconds", "Idle unload", (), f"{FAIL} Idle unload enter a number"),
+        ("refine.model", "Model", (), f"{FAIL} Model must be non-empty"),
+        ("refine.host", "Host", tuple("ftp://x"), f"{FAIL} Host "),
     ],
 )
-async def test_settings_row_input_shows_its_rejection_on_screen(tmp_path, tab, label, typed, error):
+async def test_settings_row_input_shows_its_rejection_on_screen(tmp_path, key, label, typed, error):
     app = _app(tmp_path)
     async with app.run_test(size=(150, 45)) as pilot:
-        await _open(pilot, tab)
-        await _select(pilot, label)
+        await _open(pilot, key)
         await pilot.press("enter", "ctrl+a", "ctrl+k", *typed, "enter")
         await pilot.pause()
         assert isinstance(app.screen.focused, Input), "the input stays open"
-        assert error in _row_text(app, label)
+        assert error in _message(app)
         await pilot.press("escape")
         await pilot.pause()
         assert FAIL not in _screen_text(app)
@@ -423,8 +358,7 @@ async def test_settings_row_input_shows_its_rejection_on_screen(tmp_path, tab, l
 async def test_settings_choice_row_shows_a_rejected_value_on_screen(tmp_path, monkeypatch):
     app = _app(tmp_path)
     async with app.run_test(size=(150, 45)) as pilot:
-        await _open(pilot)
-        await _select(pilot, "Hotkey mode")
+        await _open(pilot, "hotkey.mode")
 
         def reject(key, _value):
             raise ConfigError(app.config_editor.path, key, "is not allowed here")
@@ -432,7 +366,7 @@ async def test_settings_choice_row_shows_a_rejected_value_on_screen(tmp_path, mo
         monkeypatch.setattr(app.config_editor, "set_value", reject)
         await pilot.press("enter", "up", "enter")
         await pilot.pause()
-        assert f"{FAIL} is not allowed here" in _row_text(app, "Hotkey mode")
+        assert f"{FAIL} Hotkey mode is not allowed here" in _message(app)
         monkeypatch.undo()
         await pilot.press("enter", "up", "enter")
         await pilot.pause()
@@ -451,9 +385,7 @@ def test_settings_device_row_stays_responsive_and_opens_one_list_for_a_slow_enum
         app = _app(tmp_path)
         app.settings_screen.list_devices = slow_devices
         async with app.run_test(size=(150, 45)) as pilot:
-            await _open(pilot)
-            app.settings_screen.select_tab("audio")
-            await pilot.pause()
+            await _open(pilot, "audio.input_device")
             await pilot.press("enter", "enter")
             await pilot.pause()
             assert not isinstance(app.screen, ChoiceDialog)
@@ -486,7 +418,7 @@ def test_settings_device_list_does_not_open_after_the_user_leaves_the_row(tmp_pa
         app = _app(tmp_path)
         app.settings_screen.list_devices = slow_devices
         async with app.run_test(size=(150, 45)) as pilot:
-            await _open(pilot, "audio")
+            await _open(pilot, "audio.input_device")
             await pilot.press("enter")
             await pilot.pause()
             await pilot.press(leave_with)

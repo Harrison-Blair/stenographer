@@ -14,37 +14,30 @@ from stenographer.lib.config.defaults import default_toml
 from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.config.models import AnalyticsConfig, Config, DeliveryConfig, LiveConfig
 from stenographer.lib.config.paths import load_or_default
-from stenographer.lib.platform import current_platform
 
 
 def test_config_error_message():
     # Interpolate the path so the assertion follows pathlib's representation.
     path = pathlib.Path("/x")
-    err = ConfigError(path, "asr.cpu_threads", "bad")
-    assert str(err) == f"{path}: asr.cpu_threads: bad"
-    assert err.key == "asr.cpu_threads"
+    err = ConfigError(path, "asr.idle_unload_seconds", "bad")
+    assert str(err) == f"{path}: asr.idle_unload_seconds: bad"
+    assert err.key == "asr.idle_unload_seconds"
 
 
 def test_defaults_match_spec():
     d = Config.defaults()
     assert d.hotkey.binding == "KEY_RIGHTCTRL"
     assert d.hotkey.general_binding == "KEY_RIGHTALT"
-    assert d.hotkey.device is None
     assert d.hotkey.cancel_binding == "KEY_ESC"
     assert d.hotkey.mode == "hybrid"
-    assert d.hotkey.hybrid_threshold_seconds == 0.5
     assert d.audio.input_device is None
-    assert d.audio.max_recording_seconds == 600
     assert d.asr.idle_unload_seconds == 900
-    assert d.asr.cpu_threads == 0
     assert d.feedback.volume == 0.6
-    assert d.feedback.mute is False
     assert d.feedback.overlay is True
     assert d.feedback.spectrum_floor_dbfs == -45.0
     assert d.feedback.sound_pack == "minimal-ui"
-    assert d.feedback.log_level == "info"
-    assert d.analytics == AnalyticsConfig(True, True)
-    assert d.delivery == DeliveryConfig(True, True, 500)
+    assert d.analytics == AnalyticsConfig(True)
+    assert d.delivery == DeliveryConfig(True, True)
     assert d.live == LiveConfig(False)
 
 
@@ -73,7 +66,7 @@ def test_an_old_whisper_config_loads_without_error_or_warning(tmp_path, caplog):
         warnings.simplefilter("error")
         cfg = Config.load(p)
 
-    assert asdict(cfg.asr) == {"idle_unload_seconds": 120, "cpu_threads": 4}
+    assert asdict(cfg.asr) == {"idle_unload_seconds": 120}
     assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
     assert p.read_text() == OLD_WHISPER_ASR
 
@@ -82,22 +75,6 @@ def test_write_default_round_trips(tmp_path):
     p = tmp_path / "config.toml"
     p.write_bytes(default_toml().encode("utf-8"))
     assert Config.load(p) == Config.defaults()
-
-
-def test_default_template_takes_its_hotkey_device_comment_from_the_platform():
-    """``/dev/input/event*`` is a Linux fact, so the host supplies that comment.
-
-    Seen to FAIL against the hardcoded template (the rendered comment stayed
-    "explicit /dev/input/event* path" while the platform said otherwise).
-    """
-
-    expected = current_platform().guidance().hotkey_device_comment
-    rendered = default_toml()
-    assert f'device = ""                    # {expected}\n' in rendered
-    # The comment column is fixed so every annotated key still lines up.
-    assert rendered.count("                    # ") == 1
-    # Still valid, still the documented defaults.
-    assert Config.loads(rendered) == Config.defaults()
 
 
 def test_default_template_ships_the_default_mode_at_the_fixed_comment_column():
@@ -124,7 +101,7 @@ def test_default_template_ships_the_two_universal_profile_bindings():
 def test_loads_uses_supplied_path_in_errors():
     path = pathlib.Path("reviewed-config.toml")
     with pytest.raises(ConfigError) as exc:
-        Config.loads("[stenographer.asr]\ncpu_threads = 65\n", path)
+        Config.loads("[stenographer.asr]\nidle_unload_seconds = -1\n", path)
     assert exc.value.path == path
 
 
@@ -161,11 +138,9 @@ def test_default_template_leaves_no_placeholder_unfilled():
 def test_empty_string_is_unset(tmp_path):
     p = tmp_path / "config.toml"
     p.write_text(
-        '[stenographer.hotkey]\ndevice = ""\ncancel_binding = ""\n'
-        '[stenographer.audio]\ninput_device = ""\n'
+        '[stenographer.hotkey]\ncancel_binding = ""\n[stenographer.audio]\ninput_device = ""\n'
     )
     cfg = Config.load(p)
-    assert cfg.hotkey.device is None
     assert cfg.hotkey.cancel_binding is None
     assert cfg.audio.input_device is None
 
@@ -174,8 +149,7 @@ def test_empty_string_is_unset(tmp_path):
     ("toml_text", "section", "overrides"),
     [
         ('[stenographer.hotkey]\nbinding = "KEY_F8"', "hotkey", {"binding": "KEY_F8"}),
-        ("[stenographer.asr]\ncpu_threads = 4", "asr", {"cpu_threads": 4}),
-        ("[stenographer.asr]\ncpu_threads = 5", "asr", {"cpu_threads": 5}),
+        ("[stenographer.asr]\nidle_unload_seconds = 4", "asr", {"idle_unload_seconds": 4}),
         ("[stenographer.feedback]\noverlay = false", "feedback", {"overlay": False}),
         *[
             (f'[stenographer.feedback]\nsound_pack = "{name}"', "feedback", {"sound_pack": name})
@@ -219,19 +193,9 @@ def test_empty_string_is_unset(tmp_path):
         ),
         ('[stenographer.hotkey]\nmode = "toggle"', "hotkey", {"mode": "toggle"}),
         (
-            '[stenographer.hotkey]\nmode = "hybrid"\nhybrid_threshold_seconds = 1.25',
-            "hotkey",
-            {"mode": "hybrid", "hybrid_threshold_seconds": 1.25},
-        ),
-        *[
-            (f'[stenographer.feedback]\nlog_level = "{level}"', "feedback", {"log_level": "debug"})
-            for level in ("debug", "DEBUG", "Debug")
-        ],
-        (
-            "[stenographer.delivery]\ncopy_original = false\n"
-            "restore_clipboard = false\nrestore_delay_ms = 0",
+            "[stenographer.delivery]\ncopy_original = false\nrestore_clipboard = false",
             "delivery",
-            {"copy_original": False, "restore_clipboard": False, "restore_delay_ms": 0},
+            {"copy_original": False, "restore_clipboard": False},
         ),
         ("[stenographer.live]\ndiarize_mic = true", "live", {"diarize_mic": True}),
     ],
@@ -245,20 +209,19 @@ def test_partial_overrides_preserve_other_defaults(toml_text, section, overrides
 
 def test_old_config_inherits_defaults_without_rewriting(tmp_path):
     path = tmp_path / "config.toml"
-    content = "[stenographer.feedback]\nmute = true # preserved\n"
+    content = "[stenographer.feedback]\noverlay = false # preserved\n"
     path.write_text(content)
     defaults = Config.defaults()
-    assert Config.load(path) == replace(defaults, feedback=replace(defaults.feedback, mute=True))
+    assert Config.load(path) == replace(
+        defaults, feedback=replace(defaults.feedback, overlay=False)
+    )
     assert path.read_text() == content
 
 
 @pytest.mark.parametrize(
     ("toml_text", "key"),
     [
-        *[
-            (f'[stenographer.analytics]\n{key} = "true"', f"analytics.{key}")
-            for key in ("enabled", "resource_profiling")
-        ],
+        ('[stenographer.analytics]\nenabled = "true"', "analytics.enabled"),
         ('[stenographer]\nasr = "medium"', "asr"),
         ("[stenographer]\nhotkey = 1", "hotkey"),
         ("[stenographer]\naudio = true", "audio"),
@@ -267,11 +230,6 @@ def test_old_config_inherits_defaults_without_rewriting(tmp_path):
         *[
             (f"[stenographer.delivery]\n{line}", key)
             for line, key in [
-                ("restore_delay_ms = -1", "delivery.restore_delay_ms"),
-                ("restore_delay_ms = 60001", "delivery.restore_delay_ms"),
-                ("restore_delay_ms = true", "delivery.restore_delay_ms"),
-                ("restore_delay_ms = 1.5", "delivery.restore_delay_ms"),
-                ('restore_delay_ms = "500"', "delivery.restore_delay_ms"),
                 ('copy_original = "yes"', "delivery.copy_original"),
                 ("restore_clipboard = 1", "delivery.restore_clipboard"),
             ]
@@ -282,14 +240,10 @@ def test_old_config_inherits_defaults_without_rewriting(tmp_path):
             for line in ('diarize_mic = "yes"', "diarize_mic = 1")
         ],
         ("[stenographer]\nlive = 1", "live"),
-        ("[stenographer.asr]\ncpu_threads = 100\n", "asr.cpu_threads"),
-        ('[stenographer.asr]\ncpu_threads = "x"\n', "asr.cpu_threads"),
         ("[stenographer.asr]\nidle_unload_seconds = -1\n", "asr.idle_unload_seconds"),
+        ('[stenographer.asr]\nidle_unload_seconds = "x"\n', "asr.idle_unload_seconds"),
         ("[stenographer.feedback]\nvolume = -1\n", "feedback.volume"),
-        ('[stenographer.feedback]\nmute = "no"\n', "feedback.mute"),
         ('[stenographer.feedback]\noverlay = "yes"\n', "feedback.overlay"),
-        ('[stenographer.feedback]\nlog_level = "verbose"\n', "feedback.log_level"),
-        ("[stenographer.feedback]\nlog_level = 10\n", "feedback.log_level"),
         ('[stenographer.feedback]\nsound_pack = "Minimal UI"\n', "feedback.sound_pack"),
         ('[stenographer.feedback]\nsound_pack = "-minimal"\n', "feedback.sound_pack"),
         ('[stenographer.feedback]\nsound_pack = "a_thing"\n', "feedback.sound_pack"),
@@ -312,19 +266,6 @@ def test_old_config_inherits_defaults_without_rewriting(tmp_path):
         ),
         ('[stenographer.hotkey]\nbinding = ""\n', "hotkey.binding"),
         ('[stenographer.hotkey]\nmode = "latch"\n', "hotkey.mode"),
-        (
-            "[stenographer.hotkey]\nhybrid_threshold_seconds = 0\n",
-            "hotkey.hybrid_threshold_seconds",
-        ),
-        (
-            "[stenographer.hotkey]\nhybrid_threshold_seconds = 5.5\n",
-            "hotkey.hybrid_threshold_seconds",
-        ),
-        (
-            '[stenographer.hotkey]\nhybrid_threshold_seconds = "0.5"\n',
-            "hotkey.hybrid_threshold_seconds",
-        ),
-        ("[stenographer.audio]\nmax_recording_seconds = 0\n", "audio.max_recording_seconds"),
     ],
 )
 def test_out_of_range_or_wrong_type_raises(toml_text, key):
@@ -339,7 +280,7 @@ def test_default_template_documents_the_delivery_section(tmp_path):
     text = p.read_text()
 
     assert "[stenographer.delivery]" in text
-    assert "restore_delay_ms = 500" in text
+    assert "restore_clipboard = true" in text
     assert Config.load(p).delivery == DeliveryConfig()
 
 
@@ -385,3 +326,48 @@ def test_invalid_refine_scheme_does_not_expose_credentials():
         Config.loads('[stenographer.refine]\nhost = "ftp://user:secret@example.com"\n')
     assert exc.value.key == "refine.host"
     assert "secret" not in str(exc.value)
+
+
+#: The ten settings removed in the Settings reduction, each with a value
+#: other than its old default, as the user's two machines may still hold them.
+REMOVED_SETTINGS = """\
+[stenographer.hotkey]
+device = "/dev/input/event3"
+hybrid_threshold_seconds = 1.5
+
+[stenographer.audio]
+max_recording_seconds = 120
+
+[stenographer.asr]
+cpu_threads = 4
+
+[stenographer.feedback]
+mute = true
+log_level = "debug"
+
+[stenographer.refine]
+min_words = 3
+structured_output = true
+
+[stenographer.delivery]
+restore_delay_ms = 2000
+
+[stenographer.analytics]
+resource_profiling = false
+"""
+
+
+def test_a_config_with_the_removed_settings_loads_as_the_defaults(tmp_path, caplog):
+    """Acceptance check 5: a removed key loads without error and has no effect.
+
+    Seen to FAIL against the model that still read the ten keys (the loaded
+    config differed from the defaults).
+    """
+
+    p = tmp_path / "config.toml"
+    p.write_text(REMOVED_SETTINGS)
+
+    cfg = Config.load(p)
+
+    assert cfg == Config.defaults()
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []

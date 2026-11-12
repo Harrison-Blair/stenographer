@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The quick wizard: the essentials only, in the order it asks for them.
 
-Device menus come from the two module-level enumerators the quick wizard
+The microphone menu comes from the module-level enumerator the quick wizard
 shares with the full wizard, so nothing here reaches PortAudio or ``/dev/input``.
 """
 
@@ -17,19 +17,17 @@ from tests.cli.support import console as _console
 
 @pytest.fixture
 def device_menus(monkeypatch):
-    """``quick`` binds both enumerators into its own namespace, so patch them there."""
+    """``quick`` binds the enumerator into its own namespace, so patch it there."""
 
-    monkeypatch.setattr(quick_setup, "_hotkey_devices", lambda: [("event3", "event3: Keyboard")])
     monkeypatch.setattr(quick_setup, "_audio_devices", lambda: [("1", "1: USB mic")])
 
 
 def test_quick_wizard_asks_only_the_essentials_and_returns_them(device_menus, tmp_path):
     console = _console(
-        "1\n"  # hotkey device
         "type\nKEY_F9\n"  # binding
         "toggle\n"  # mode
         "1\n"  # audio input device
-        "0.8\n\n\nlegacy\n"  # feedback: volume, mute, overlay, pack
+        "0.8\n\nlegacy\n"  # feedback: volume, overlay, pack
         "keep\n"  # spectrum response
         "no\n"  # refine: turn off
         "\n"  # review: save
@@ -42,14 +40,12 @@ def test_quick_wizard_asks_only_the_essentials_and_returns_them(device_menus, tm
         new_config=False,
     )
 
-    assert config.hotkey.device == "event3"
     assert config.hotkey.binding == "KEY_F9"
     assert config.hotkey.mode == "toggle"
     assert config.audio.input_device == "1"
     assert config.feedback.volume == 0.8
     assert config.feedback.sound_pack == "legacy"
-    # The quick wizard never touches the recording limit or any ASR key.
-    assert config.audio.max_recording_seconds == Config.defaults().audio.max_recording_seconds
+    # The quick wizard never touches any ASR key.
     assert config.asr == Config.defaults().asr
 
     stdout = console.stdout.getvalue()
@@ -59,15 +55,13 @@ def test_quick_wizard_asks_only_the_essentials_and_returns_them(device_menus, tm
     assert "IMPORTANT: spectrum calibration controls only the 18 display bars." in stdout
     assert "\nQuick setup review" in stdout
     assert "Save [Enter/S] or Cancel [C]: " in stdout
-    # The log threshold is not an essential.
-    assert "Log level" not in stdout
 
 
 def test_quick_wizard_skips_calibration_when_the_overlay_is_turned_off(device_menus, tmp_path):
     console = _console(
-        "\nkeep\n\n"  # hotkey device, binding, mode
+        "keep\n\n"  # binding, mode
         "\n"  # audio input device
-        "\n\nno\n\n"  # feedback, overlay disabled
+        "\nno\n\n"  # feedback, overlay disabled
         "no\n"  # refine: turn off
         "\n"  # review: save
     )
@@ -86,14 +80,14 @@ def test_quick_wizard_skips_calibration_when_the_overlay_is_turned_off(device_me
 
 
 def test_quick_wizard_cancel_raises_so_nothing_is_saved(device_menus, tmp_path):
-    console = _console("\nkeep\n\n\n\n\n\n\nkeep\nno\nc\n")
+    console = _console("keep\n\n\n\n\n\nkeep\nno\nc\n")
 
     with pytest.raises(SetupCancelledError):
         quick_setup._quick_wizard(console, Config.defaults(), tmp_path, new_config=False)
 
 
 def test_a_new_configuration_offers_binding_capture_first(device_menus, tmp_path):
-    console = _console("\nkeep\n\n\n\n\n\n\nkeep\nno\n\n")
+    console = _console("keep\n\n\n\n\n\nkeep\nno\n\n")
 
     quick_setup._quick_wizard(console, Config.defaults(), tmp_path, new_config=True)
 

@@ -11,7 +11,7 @@ import tomlkit
 from stenographer.lib.config.document import ConfigDocument
 from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.config.models import Config, RefineConfig
-from stenographer.lib.refine.prompt import DEFAULT_MODEL, DEFAULT_STRUCTURED_OUTPUT
+from stenographer.lib.refine.prompt import DEFAULT_MODEL
 
 
 def _load_document(tmp_path, content):
@@ -26,8 +26,6 @@ def test_the_stage_ships_on_and_loopback():
     assert section.enabled is True
     assert section.host == "http://127.0.0.1:11434"
     assert section.model == DEFAULT_MODEL
-    assert section.min_words == 10
-    assert section.structured_output is DEFAULT_STRUCTURED_OUTPUT
 
 
 def test_a_config_written_before_refine_existed_loads_without_migration():
@@ -68,9 +66,6 @@ def test_a_host_without_a_scheme_is_normalized_rather_than_rejected():
         ('[stenographer.refine]\nhost = "http://token@127.0.0.1:11434"\n', "refine.host"),
         ("[stenographer.refine]\nhost = 11434\n", "refine.host"),
         ('[stenographer.refine]\nmodel = "  "\n', "refine.model"),
-        ("[stenographer.refine]\nmin_words = 0\n", "refine.min_words"),
-        ("[stenographer.refine]\nmin_words = 1.5\n", "refine.min_words"),
-        ('[stenographer.refine]\nstructured_output = "on"\n', "refine.structured_output"),
     ],
 )
 def test_a_rejected_value_names_its_own_key(toml_text, key):
@@ -100,14 +95,7 @@ def test_render_materializes_every_refine_key_in_declaration_order(tmp_path):
     rendered = _load_document(tmp_path, "").render(Config.defaults())
     section = tomlkit.parse(rendered)["stenographer"]["refine"]
 
-    assert list(section) == [
-        "enabled",
-        "host",
-        "model",
-        "min_words",
-        "structured_output",
-        "vocabulary",
-    ]
+    assert list(section) == ["enabled", "host", "model", "vocabulary"]
 
 
 def test_an_upper_case_scheme_is_accepted_and_stored_folded():
@@ -185,8 +173,6 @@ def test_save_round_trips_the_vocabulary_and_keeps_comments_and_unknown_keys(tmp
             source.config.refine,
             host="http://192.168.1.5:11434",
             model="some/other:tag",
-            min_words=25,
-            structured_output=False,
             vocabulary=("Kubernetes", "PipeWire"),
         ),
     )

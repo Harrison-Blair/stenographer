@@ -89,7 +89,6 @@ _GUIDANCE = HostGuidance(
     service_start_command="systemctl --user start stenographer.service",
     service_restart_command="systemctl --user restart stenographer.service",
     service_log_command="journalctl --user -u stenographer -f",
-    hotkey_device_comment='explicit /dev/input/event* path; "" = auto-detect',
     run_with_config=lambda path: f"STENOGRAPHER_CONFIG={path} stenographer run",
 )
 _OVERLAY_GUIDANCE = OverlayGuidance(
@@ -130,7 +129,6 @@ _OTHER_GUIDANCE = HostGuidance(
     service_start_command="agentctl start",
     service_restart_command="agentctl restart",
     service_log_command="agentctl logs",
-    hotkey_device_comment="opaque device id",
     run_with_config=lambda path: f"with-config {path}",
 )
 _OTHER_OVERLAY_GUIDANCE = OverlayGuidance(

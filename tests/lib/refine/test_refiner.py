@@ -267,9 +267,10 @@ def test_explicit_override_controls_the_factory(configured, override, expected):
 
 def test_the_factory_passes_the_loading_observers_through(transport):
     transport["loaded"] = False
+    transport["reply"] = _answer(CLEANED, structured=False)
     events = []
     refiner = build_refiner(
-        RefineConfig(enabled=True, structured_output=True),
+        RefineConfig(enabled=True),
         idle_unload_seconds=900,
         on_model_loading=lambda: events.append("loading"),
         on_model_loading_finished=lambda: events.append("finished"),
