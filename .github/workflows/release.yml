@@ -328,7 +328,7 @@ jobs:
           TAG="${tag}"
           VERSION="${version}"
           DRAFT_ID="${draft_id}"
-          printf 'v%s\n' "${VERSION}" > "${RUNNER_TEMP}/release-name.txt"
+          printf 'v%s' "${VERSION}" > "${RUNNER_TEMP}/release-name.txt"
 
           request=(
             -f "tag_name=${TAG}"
