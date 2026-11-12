@@ -229,7 +229,7 @@ A line ends at a pause or where the speaker changes, and has one speaker.
 Nemotron-3-Diarization finds the speaker changes; each line is decoded once.
 A part of a line that decodes to no text joins the part before it (or its only
 neighbour) and is decoded once more, so its speech stays in a line.
-During a recording, a line shows about one second after its last word, when its
+During a recording, a line shows a few seconds after its last word, when its
 speakers are final. Speakers are numbered from 1 in order of first appearance,
 per source: `Speaker N` for system audio, `Room N` for the microphone with
 `live.diarize_mic` on. Labels are estimates, not identity checks.
