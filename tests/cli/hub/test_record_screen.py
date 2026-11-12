@@ -162,7 +162,7 @@ def _hints(app: HubApp) -> str:
 
 def _engine_state(app: HubApp) -> str:
     engine = str(app.screen.query_one("#top-engine", Static).render())
-    return engine.partition(" ")[2].partition("  cpu ")[0]
+    return engine.split()[1]
 
 
 async def _until(pilot, condition, message="condition not met") -> None:
@@ -334,7 +334,7 @@ async def test_record_overlapping_stops_keep_the_first_in_the_engine_status(tmp_
         await pilot.press("1")
         app.refresh_view()
         await pilot.pause()
-        assert _engine_state(app) == "labelling speakers"
+        assert _engine_state(app) == "labelling"
         assert second.path.name in _screen_text(app)
 
         first.release.set()
@@ -343,7 +343,7 @@ async def test_record_overlapping_stops_keep_the_first_in_the_engine_status(tmp_
         assert app.is_busy(second.path.name)
         app.refresh_view()
         await pilot.pause()
-        assert _engine_state(app) == "labelling speakers"
+        assert _engine_state(app) == "labelling"
 
         second.release.set()
         await _until(pilot, lambda: not app.is_busy(second.path.name))
@@ -547,10 +547,10 @@ async def test_record_transcript_split_view_and_talk_time(tmp_path):
         app.refresh_view()
         await pilot.pause()
         text = _screen_text(app)
-        assert "transcript · 2 speakers" in text
+        assert "transcript ·   2 speakers" in text
         mixed = [row for row in text.splitlines() if "alpha bravo" in row]
         assert len(mixed) == 1 and "00:00:01" in mixed[0] and "You" in mixed[0]
-        assert _speaker_bar(app) == "You 0:02   Speaker 1 0:01"
+        assert _speaker_bar(app) == "You  0:02   Speaker 1  0:01"
         assert "[r] Rename…" in text
 
         await pilot.press("v")

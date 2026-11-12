@@ -37,6 +37,14 @@ class Clock(Digits):
         return f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes}:{seconds:02d}"
 
     @staticmethod
+    def talk_time(seconds: float) -> str:
+        """Return ``M:SS`` up to ``99:59``, then ``1h40m``; never wider than 5 cells."""
+        whole = int(seconds)
+        if whole < 6000:
+            return f"{whole // 60}:{whole % 60:02d}"
+        return f"{whole // 3600}h{whole % 3600 // 60:02d}m"
+
+    @staticmethod
     def format(seconds: float) -> str:
         whole = int(seconds)
         hours, remainder = divmod(whole, 3600)

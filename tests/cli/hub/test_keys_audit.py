@@ -327,7 +327,7 @@ def _key_problems(app: HubApp) -> list[str]:
         elif isinstance(button, HubButton) and action is not None:
             owner = next(
                 node
-                for node in button.ancestors_with_self
+                for node in button.action_nodes()
                 if callable(getattr(node, f"action_{action.partition('(')[0]}", None))
             )
             if owner is not item.node:
@@ -450,9 +450,7 @@ def test_each_button_click_runs_the_action_of_its_key(tmp_path, name):
                 continue
             action = button.action_name
             method = f"action_{action.partition('(')[0]}"
-            owner = next(
-                n for n in button.ancestors_with_self if callable(getattr(n, method, None))
-            )
+            owner = next(n for n in button.action_nodes() if callable(getattr(n, method, None)))
             calls = []
             setattr(owner, method, lambda *args, _calls=calls: _calls.append(args))
             try:

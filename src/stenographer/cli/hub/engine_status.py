@@ -8,10 +8,9 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class EngineStatus:
-    """Model, state line and gauges; a gauge is ``None`` before its sample."""
+    """Model, state and gauges; a gauge is ``None`` before its sample."""
 
     model: str
     state: str
     cpu_app_percent: float | None
-    cpu_all_percent: float | None
     ram_app_bytes: int | None

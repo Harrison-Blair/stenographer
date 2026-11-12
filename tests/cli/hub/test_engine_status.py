@@ -71,16 +71,16 @@ def _sampler(services, tmp_path, clock=None, **options):
 @pytest.mark.parametrize(
     ("services", "expected"),
     [
-        (FakeServices(), "idle · unloaded"),
-        (FakeServices(files_engine=FakeEngine()), "idle · unloaded"),
-        (FakeServices(files_engine=FakeEngine(deadline=1012.2)), "idle · unloads in 13 s"),
-        (FakeServices(files_engine=FakeEngine(deadline=1030.0)), "idle · unloads in 30 s"),
+        (FakeServices(), "idle"),
+        (FakeServices(files_engine=FakeEngine()), "idle"),
+        (FakeServices(files_engine=FakeEngine(deadline=1012.2)), "idle 13s"),
+        (FakeServices(files_engine=FakeEngine(deadline=1030.0)), "idle 30s"),
         (FakeServices(session=FakeSession()), "ready"),
-        (FakeServices(session=FakeSession(queue_depth=3)), "ready · 3 queued"),
+        (FakeServices(session=FakeSession(queue_depth=3)), "ready"),
         (FakeServices(files_engine=FakeEngine(active_job=FakeJob(percent=42))), "transcribing 42%"),
         (
             FakeServices(session=FakeSession(labelling=True)),
-            "labelling speakers",
+            "labelling",
         ),
         # Overlaps: the first state in precedence order wins.
         (
@@ -88,20 +88,20 @@ def _sampler(services, tmp_path, clock=None, **options):
                 session=FakeSession(labelling=True),
                 files_engine=FakeEngine(active_job=FakeJob(percent=10)),
             ),
-            "labelling speakers",
+            "labelling",
         ),
         (
             FakeServices(
                 stopping_sessions=(FakeSession(labelling=True),),
                 session=FakeSession(queue_depth=1),
             ),
-            "labelling speakers",
+            "labelling",
         ),
         (
             FakeServices(
                 stopping_sessions=(FakeSession(), FakeSession(labelling=True)),
             ),
-            "labelling speakers",
+            "labelling",
         ),
         (
             FakeServices(
@@ -121,7 +121,7 @@ def _sampler(services, tmp_path, clock=None, **options):
                 session=FakeSession(queue_depth=2),
                 files_engine=FakeEngine(active_job=FakeJob(state="cancelled"), deadline=1010.0),
             ),
-            "ready · 2 queued",
+            "ready",
         ),
         (
             FakeServices(
@@ -135,7 +135,7 @@ def _sampler(services, tmp_path, clock=None, **options):
                 stopping_sessions=(FakeSession(deadline=1003.5),),
                 files_engine=FakeEngine(deadline=1010.0),
             ),
-            "idle · unloads in 4 s",
+            "idle 4s",
         ),
     ],
 )
@@ -175,13 +175,13 @@ def test_engine_state_line_follows_one_recording_through_stop_file_job_and_unloa
 
     assert states == [
         "ready",
-        "ready · 2 queued",
-        "labelling speakers",
-        "idle · unloaded",
+        "ready",
+        "labelling",
+        "idle",
         "transcribing 50%",
-        "idle · unloads in 30 s",
-        "idle · unloads in 1 s",
-        "idle · unloaded",
+        "idle 30s",
+        "idle 1s",
+        "idle",
     ]
 
 
@@ -195,11 +195,6 @@ class FakeProc:
     def __init__(self, root):
         self.root = root
 
-    def system(self, total, idle):
-        # user nice system idle iowait irq softirq steal
-        busy = total - idle
-        (self.root / "stat").write_text(f"cpu  {busy} 0 0 {idle} 0 0 0 0 0 0\n", encoding="ascii")
-
     def process(self, pid, ticks, rss_pages):
         folder = self.root / str(pid)
         folder.mkdir(exist_ok=True)
@@ -210,17 +205,15 @@ class FakeProc:
 
 def test_engine_gauges_are_none_before_the_first_sample(tmp_path):
     proc = FakeProc(tmp_path)
-    proc.system(1000, 500)
     proc.process(HUB_PID, 10, 100)
 
     status = _sampler(FakeServices(), tmp_path).snapshot()
 
     assert status.cpu_app_percent is None
-    assert status.cpu_all_percent is None
     assert status.ram_app_bytes is None
 
 
-def test_engine_samples_app_cpu_over_hub_and_worker_pids_system_cpu_and_app_ram(tmp_path):
+def test_engine_samples_app_cpu_over_hub_and_worker_pids_and_app_ram(tmp_path):
     clock = FakeClock()
     proc = FakeProc(tmp_path)
     services = FakeServices(
@@ -228,7 +221,6 @@ def test_engine_samples_app_cpu_over_hub_and_worker_pids_system_cpu_and_app_ram(
         files_engine=FakeEngine(pids=(FILES_PID,)),
     )
     sampler = _sampler(services, tmp_path, clock)
-    proc.system(10_000, 6_000)
     proc.process(HUB_PID, 1_000, 100)
     proc.process(LIVE_PID, 2_000, 200)
     proc.process(FILES_PID, 3_000, 300)
@@ -237,7 +229,6 @@ def test_engine_samples_app_cpu_over_hub_and_worker_pids_system_cpu_and_app_ram(
     first = sampler.snapshot()
 
     assert first.cpu_app_percent is None
-    assert first.cpu_all_percent is None
     assert first.ram_app_bytes == 600 * 4096
 
     clock.now += 1.0
@@ -245,13 +236,10 @@ def test_engine_samples_app_cpu_over_hub_and_worker_pids_system_cpu_and_app_ram(
     proc.process(HUB_PID, 1_050, 110)
     proc.process(LIVE_PID, 2_150, 200)
     proc.process(FILES_PID, 3_000, 300)
-    # 1000 jiffies pass, 250 of them idle: 75 % busy.
-    proc.system(11_000, 6_250)
     sampler.sample()
     second = sampler.snapshot()
 
     assert second.cpu_app_percent == pytest.approx(50.0)
-    assert second.cpu_all_percent == pytest.approx(75.0)
     assert second.ram_app_bytes == 610 * 4096
 
 
@@ -261,7 +249,6 @@ def test_engine_app_cpu_counts_a_new_worker_and_drops_a_gone_one(tmp_path):
     engine = FakeEngine(pids=(FILES_PID,))
     services = FakeServices(files_engine=engine)
     sampler = _sampler(services, tmp_path, clock)
-    proc.system(10_000, 5_000)
     proc.process(HUB_PID, 0, 10)
     proc.process(FILES_PID, 5_000, 10)
     sampler.sample()
@@ -271,7 +258,6 @@ def test_engine_app_cpu_counts_a_new_worker_and_drops_a_gone_one(tmp_path):
     engine.process_ids = ()
     proc.process(LIVE_PID, 80, 20)
     services.session = FakeSession(pids=(LIVE_PID,))
-    proc.system(11_000, 5_500)
     sampler.sample()
 
     status = sampler.snapshot()
@@ -287,11 +273,7 @@ def test_engine_gauges_stay_none_when_proc_is_unreadable(tmp_path):
     sampler.sample()
 
     status = sampler.snapshot()
-    assert (status.cpu_app_percent, status.cpu_all_percent, status.ram_app_bytes) == (
-        None,
-        None,
-        None,
-    )
+    assert (status.cpu_app_percent, status.ram_app_bytes) == (None, None)
 
 
 def test_engine_gauges_stay_none_on_a_host_without_counters(tmp_path):
@@ -302,12 +284,8 @@ def test_engine_gauges_stay_none_on_a_host_without_counters(tmp_path):
     sampler.sample()
 
     status = sampler.snapshot()
-    assert (status.cpu_app_percent, status.cpu_all_percent, status.ram_app_bytes) == (
-        None,
-        None,
-        None,
-    )
-    assert status.state == "idle · unloaded"
+    assert (status.cpu_app_percent, status.ram_app_bytes) == (None, None)
+    assert status.state == "idle"
 
 
 def test_engine_sampler_and_its_linux_counters_import_no_subprocess():
@@ -341,7 +319,7 @@ def test_engine_reads_the_files_engine_that_hub_services_create(tmp_path):
     sampler = _sampler(services, tmp_path)
 
     assert services.files_engine is None
-    assert sampler.snapshot().state == "idle · unloaded"
+    assert sampler.snapshot().state == "idle"
     services.submit_file(tmp_path / "voice.wav")
     assert services.files_engine is engine
     assert sampler.snapshot().state == "transcribing 64%"
@@ -358,7 +336,6 @@ def test_engine_sampler_feeds_the_top_line(tmp_path):
 
     clock = FakeClock()
     proc = FakeProc(tmp_path)
-    proc.system(1_000, 500)
     proc.process(HUB_PID, 0, 1)
     services = SimpleNamespace(recording=False, files_running=False)
     sampler = _sampler(services, tmp_path, clock)
@@ -374,13 +351,14 @@ def test_engine_sampler_feeds_the_top_line(tmp_path):
             await pilot.press("2")
             await pilot.pause()
             engine = app.screen.query_one("#top-engine", Static)
-            assert " all — " in str(engine.render())
+            assert str(engine.render()).endswith("cpu    —  ram  0.0G")
 
-            # 1000 jiffies pass, 250 of them idle: 75 % busy.
+            # 200 ticks at 100 ticks/s over 1 s on 4 CPUs is 50 %; 1 page of RAM.
             clock.now += 1.0
-            proc.system(2_000, 750)
+            proc.process(HUB_PID, 200, 1)
             app._sample_engine()
             await pilot.pause()
-            assert " all 75% " in str(engine.render())
+            assert str(engine.render()).endswith("cpu  50%  ram  0.0G")
+            assert " all " not in str(engine.render())
 
     asyncio.run(exercise())

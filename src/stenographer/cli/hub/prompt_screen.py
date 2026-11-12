@@ -6,6 +6,8 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Static
 
+from stenographer.cli.hub.widgets.dialog import fit_dialog
+
 
 class PromptScreen[Result](ModalScreen[Result]):
     PROMPT_CSS = """
@@ -31,6 +33,12 @@ class PromptScreen[Result](ModalScreen[Result]):
         margin-left: 1;
     }
     """
+
+    def on_mount(self) -> None:
+        fit_dialog(self.query_one(".prompt-dialog"), self.app.size.width)
+
+    def on_resize(self) -> None:
+        fit_dialog(self.query_one(".prompt-dialog"), self.app.size.width)
 
     def prompt_body(self) -> ComposeResult:
         yield from ()

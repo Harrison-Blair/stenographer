@@ -25,6 +25,10 @@ class EngineSampler:
     a few small counter files (``/proc`` on Linux) and starts no process. App CPU counts the hub
     process and the ASR workers of the services, as a share of all CPUs.
 
+    The state is one of ``ready``, ``idle 212s`` (a model is in memory and
+    unloads in 212 s), ``idle`` (no model in memory), ``transcribing 43%`` and
+    ``labelling``.
+
     The services give ``session`` (the recording ``LiveSession``),
     ``stopping_sessions`` (stopping sessions in stop order) and
     ``files_engine``; each one is optional.
@@ -46,9 +50,7 @@ class EngineSampler:
         self._cpu_count = len(os.sched_getaffinity(0)) if cpu_count is None else cpu_count
         self._sampled_at: float | None = None
         self._process_ticks: dict[int, int] = {}
-        self._system_times: tuple[int, int] | None = None
         self._cpu_app: float | None = None
-        self._cpu_all: float | None = None
         self._ram_app: int | None = None
 
     def sample(self) -> None:
@@ -79,22 +81,12 @@ class EngineSampler:
             self._cpu_app = None
         self._process_ticks = ticks if hub_read else {}
 
-        system = self._counters.system_cpu_times()
-        previous, self._system_times = self._system_times, system
-        self._cpu_all = None
-        if system is not None and previous is not None:
-            total = system[0] - previous[0]
-            idle = system[1] - previous[1]
-            if total > 0:
-                self._cpu_all = max(0.0, min(100.0, 100.0 * (1 - idle / total)))
-
     def snapshot(self) -> EngineStatus:
         """Return the status; the state line reads the services now."""
         return EngineStatus(
             model=MODEL_DIRNAME,
             state=self._state(),
             cpu_app_percent=self._cpu_app,
-            cpu_all_percent=self._cpu_all,
             ram_app_bytes=self._ram_app,
         )
 
@@ -114,15 +106,13 @@ class EngineSampler:
     def _state(self) -> str:
         for session in self._sessions():
             if session.labelling_speakers:
-                return "labelling speakers"
+                return "labelling"
         engine = getattr(self._services, "files_engine", None)
         job = None if engine is None else engine.active_job
         if job is not None and job.state == "running":
             return f"transcribing {job.progress.percent}%"
-        session = getattr(self._services, "session", None)
-        if session is not None:
-            queued = session.queue_depth
-            return f"ready · {queued} queued" if queued else "ready"
+        if getattr(self._services, "session", None) is not None:
+            return "ready"
         deadlines = [
             deadline
             for owner in self._workers()
@@ -130,5 +120,5 @@ class EngineSampler:
         ]
         if deadlines:
             seconds = max(0, math.ceil(min(deadlines) - self._monotonic()))
-            return f"idle · unloads in {seconds} s"
-        return "idle · unloaded"
+            return f"idle {seconds}s"
+        return "idle"

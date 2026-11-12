@@ -75,18 +75,11 @@ _DEFAULT_DEVICE = {"audio.input_device": "Default input"}
 # Fixed slots: the unsaved count of the message line and the count beside Save.
 _UNSAVED_SLOT = 20
 _COUNT_SLOT = 10
-_WIDE_COLUMNS = 120
-_MEDIUM_COLUMNS = 80
 
 
-def settings_tier(width: int) -> str:
-    """Return ``wide``, ``medium`` or ``narrow`` for a terminal width.
-
-    The hub tier classes replace this once they exist.
-    """
-    if width >= _WIDE_COLUMNS:
-        return "wide"
-    return "medium" if width >= _MEDIUM_COLUMNS else "narrow"
+def _tab_gap(tier: str) -> int:
+    """Return the cells after each tab row button."""
+    return 3 if tier == "wide" else 2
 
 
 def _count_text(count: int) -> str:
@@ -213,6 +206,7 @@ class SettingsScreen(HubScreen):
                         tight=True,
                         id=f"tab-{name}",
                     )
+                yield self.checks_tab.summary_row
                 yield Static("", id="settings-tabs-gap")
                 yield HubButton("Undo", key="u", action="undo", tight=True, id="config-undo")
                 yield HubButton(
@@ -246,14 +240,6 @@ class SettingsScreen(HubScreen):
             editor.show_keys(SETTINGS_KEYS)
         self._sync_tab_widgets()
 
-    @property
-    def tier(self) -> str:
-        return settings_tier(self.app.size.width)
-
-    def on_resize(self) -> None:
-        if self.ready:
-            self.app.refresh_view()
-
     def select_tab(self, tab: str) -> None:
         """Show one tab; unsaved changes stay."""
         if not self._commit_input():
@@ -269,6 +255,8 @@ class SettingsScreen(HubScreen):
     def _sync_tab_widgets(self) -> None:
         config_tab = self.tab != "checks"
         self.checks_tab.display = not config_tab
+        self.checks_tab.summary_row.display = not config_tab
+        self.query_one("#settings-tabs-gap").display = config_tab
         self.query_one("#config-body").display = config_tab
         for name, _label in TABS:
             self.query_one(f"#tab-{name}", HubButton).set_label(self.tab_label(name))
@@ -319,8 +307,14 @@ class SettingsScreen(HubScreen):
             self.query_one(selector).display = config_tab and not editor.read_only
         count_slot = self.query_one("#config-count", Static)
         count_slot.display = config_tab and not editor.read_only and tier == "wide"
+        self._fit_tab_margins(tier)
+        # The narrow Checks detail puts [esc] ← Checks in place of the tabs.
+        checks = self.checks_tab
+        back = not config_tab and checks.narrow and checks.detail_open
+        for name, _label in TABS:
+            self.query_one(f"#tab-{name}").display = not back
         if not config_tab:
-            self.checks_tab.refresh_view()
+            checks.refresh_view()
             return
         if editor.shown_keys is None and not editor.read_only:
             editor.show_keys(SETTINGS_KEYS)
@@ -339,15 +333,23 @@ class SettingsScreen(HubScreen):
         update_changed(count_slot, _count_text(count) if count else "")
         update_changed(summary, self._config_summary(editor, tier))
 
+    def _tab_buttons(self) -> list[HubButton]:
+        """Return the buttons of the tab row itself, not those of the Checks summary."""
+        row = self.query_one("#settings-tabs")
+        return [child for child in row.children if isinstance(child, HubButton)]
+
+    def _fit_tab_margins(self, tier: str) -> None:
+        gap = _tab_gap(tier)
+        for button in self._tab_buttons():
+            button.styles.margin = (0, 0 if button.id == "config-save" else gap, 0, 0)
+
     def _fit_tab_row(self, tier: str) -> None:
         """Hide the buttons that have a key, Reset row first, until the tab row fits."""
-        gap = 3 if tier == "wide" else 2
+        gap = _tab_gap(tier)
         row = self.query_one("#settings-tabs")
-        shown = list(row.query(HubButton))
-        for button in shown:
-            button.styles.margin = (0, 0 if button.id == "config-save" else gap, 0, 0)
         for selector in _DROPPABLE_BUTTONS:
             self.query_one(selector).display = True
+        shown = [button for button in self._tab_buttons() if button.display]
         width = row.content_size.width or self.app.size.width
         count = _COUNT_SLOT if self.query_one("#config-count").display else 0
         needed = (
@@ -522,7 +524,7 @@ class SettingsScreen(HubScreen):
         if self.typing:
             return (("enter", "keep"), ("esc", "cancel"), ("tab", "next row"), ("ctrl+s", "save"))
         if self.tab == "checks":
-            return (("←→", "tab"), *self.checks_tab.footer_hints())
+            return (*self.checks_tab.footer_hints(), ("←→", "tab"))
         return (
             ("enter", "edit"),
             ("space", "toggle"),

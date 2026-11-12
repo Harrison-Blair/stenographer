@@ -51,23 +51,6 @@ def _write_proc(root, relative, text):
     path.write_text(text, encoding="ascii")
 
 
-def test_system_cpu_times_sum_busy_and_idle_jiffies(tmp_path):
-    from stenographer.lib.platform.linux.cpu import read_system_cpu_times
-
-    # user nice system idle iowait irq softirq steal guest guest_nice
-    _write_proc(tmp_path, "stat", "cpu  100 5 50 800 20 3 2 10 7 1\ncpu0 1 1 1 1 1 1 1 1 1 1\n")
-
-    assert read_system_cpu_times(tmp_path) == (990, 820)
-
-
-def test_system_cpu_times_unreadable_is_none(tmp_path):
-    from stenographer.lib.platform.linux.cpu import read_system_cpu_times
-
-    assert read_system_cpu_times(tmp_path) is None
-    _write_proc(tmp_path, "stat", "intr 1 2 3\n")
-    assert read_system_cpu_times(tmp_path) is None
-
-
 def test_process_cpu_ticks_add_user_and_system_after_the_command_name(tmp_path):
     from stenographer.lib.platform.linux.cpu import read_process_cpu_ticks
 
@@ -97,6 +80,4 @@ def test_linux_platform_cpu_counters_read_this_process_from_proc():
 
     assert counters.process_cpu_ticks(os.getpid()) >= 0
     assert counters.process_resident_bytes(os.getpid()) > 0
-    total, idle = counters.system_cpu_times()
-    assert total >= idle > 0
     assert counters.clock_ticks > 0

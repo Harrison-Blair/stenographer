@@ -86,12 +86,12 @@ def test_on_state_head_scale_and_level_rows():
     model = _on_model()
     model.feed(_tone(200, 0.1))
 
-    assert model.head == ("[m] MIC on · Default input", "○ quiet")
+    assert model.head == ("[m] MIC on   Default input", "○ quiet")
     model.speech = True
-    assert model.head == ("[m] MIC on · Default input", "● speech")
+    assert model.head == ("[m] MIC on   Default input", "● speech")
     assert model.scale == SCALE
     # A 0.1 sine has RMS 0.0707, which is -23.01 dBFS.
-    assert model.level_text == "-23 dBFS  peak -23"
+    assert model.level_text == " -23.0 dBFS  peak  -23.0"
     assert SpectrumMeterModel("system", "Default output").head[0].startswith("[s] SYSTEM")
 
 
@@ -101,22 +101,22 @@ def test_peak_holds_for_three_seconds_then_falls():
     model.feed(_tone(200, 0.5))  # RMS 0.354: -9.03 dBFS
     clock.now = 1.0
     model.feed(_tone(200, 0.01))  # RMS 0.00707: -43.01 dBFS
-    assert model.level_text == "-43 dBFS  peak -9"
+    assert model.level_text == " -43.0 dBFS  peak   -9.0"
 
     clock.now = 2.9
     model.feed(_tone(200, 0.01))
-    assert model.level_text == "-43 dBFS  peak -9"
+    assert model.level_text == " -43.0 dBFS  peak   -9.0"
 
     clock.now = 3.5
     model.feed(_tone(200, 0.01))
-    assert model.level_text == "-43 dBFS  peak -43"
+    assert model.level_text == " -43.0 dBFS  peak  -43.0"
 
 
 def test_idle_state_draws_a_dotted_grid_and_the_caller_text():
     model = SpectrumMeterModel("mic", "Default input")
     model.set_state("idle", idle_text="not recording")
 
-    assert model.head[0] == "[m] MIC idle · Default input"
+    assert model.head[0] == "[m] MIC idle Default input"
     assert model.rows == (DOTS,) * 8
     assert model.level_text == "not recording"
 
@@ -128,7 +128,7 @@ def test_off_state_names_the_key_that_enables_the_source():
     system = SpectrumMeterModel("system", "Default output")
     system.set_state("off")
 
-    assert mic.head[0] == "[m] MIC off · Default input"
+    assert mic.head[0] == "[m] MIC off  Default input"
     assert mic.level_text == "off · press m to enable"
     assert system.level_text == "off · press s to enable"
     assert _heights(mic.rows) == [0] * 18
@@ -141,7 +141,7 @@ def test_turning_on_again_starts_from_an_empty_meter():
     model.set_state("on")
 
     assert _heights(model.rows) == [0] * 18
-    assert model.level_text == "-inf dBFS  peak -inf"
+    assert model.level_text == "  -inf dBFS  peak   -inf"
 
 
 class MeterApp(App):
@@ -171,7 +171,7 @@ def test_widget_draws_blocks_fed_from_another_thread():
             meter.set_state("idle", idle_text="not recording")
             await pilot.pause()
             text = _screen_text(app)
-            assert "MIC idle · Default input" in text
+            assert "MIC idle Default input" in text
             assert "not recording" in text
             assert "█" not in text
 
@@ -182,11 +182,11 @@ def test_widget_draws_blocks_fed_from_another_thread():
             feeder.join()
             await pilot.pause(0.2)
             text = _screen_text(app)
-            assert "[m] MIC on · Default input" in text
+            assert "[m] MIC on   Default input" in text
             assert "● speech" in text
             assert "█" in text
             assert SCALE in text
-            assert "-23 dBFS  peak -23" in text
+            assert " -23.0 dBFS  peak  -23.0" in text
 
             meter.set_state("off")
             await pilot.pause()

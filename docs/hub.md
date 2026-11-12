@@ -24,7 +24,8 @@ screen. Keys `4` to `6` do nothing.
 | `3` | Settings | Edit settings on one page, and run the system checks. |
 
 Each screen has one top line and one row of key hints at the bottom. Long Settings values are cut with `…`. The hint row
-starts with `? help · q quit`. Press `?` to open a help overlay that lists every
+starts with `? help · q quit` and lists the other keys in order of importance. When the row
+is too narrow, whole items drop from the right; `? help` always stays. Press `?` to open a help overlay that lists every
 key of the current screen; press `?` or `escape` to close it. Each control on
 screen prints its key, for example `[r] Run again`, and a click on it does the
 same as the key.
@@ -43,16 +44,46 @@ The top line shows, from left to right:
 - **Navigation:** `1 Record`, `2 Library`, and `3 Settings`. The current screen
   has a bold `▶` marker. Record shows `● HH:MM:SS` while a recording runs and
   `Ⅱ HH:MM:SS` while it is paused. Library shows its entry count. Settings
-  shows `N W` when the last check run has warnings and `N F` when it has
+  shows `NW` when the last check run has warnings and `NF` when it has
   failures.
-- **Engine status:** the model (`bark-pro-int8`), a state such as
-  `ready · 2 queued` or `idle · unloaded`, the CPU use of the hub and its speech
-  worker (`cpu`), the CPU use of the system (`all`), and the memory of the hub
-  and its worker (`ram`). For example:
-  `bark-pro-int8 ready  cpu 12% all 40%  ram 1.2G`. The values update once per
-  second. A value shows `—` before its first sample.
+- **Engine status:** the model (`bark-pro-int8`), the state, the CPU use of the
+  hub and its speech worker (`cpu`), and the memory of the hub and its worker
+  (`ram`). For example: `bark-pro-int8   ready   cpu  12%  ram  1.2G`. The state is
+  `ready` (a recording runs), `idle 212s` (the model is in memory and unloads in
+  212 seconds), `idle` (the model is not in memory), `transcribing 43%` (a file
+  job runs), or `labelling` (a stopped recording gets its speaker labels). The
+  values update once per second. A value shows `—` before its first sample.
 
-The screens need at least 120 columns.
+Each changing value has a slot of fixed width, so a new value does not move
+the text beside it. Numbers are right-aligned in their slots.
+
+### Sizes
+
+The hub works in any terminal from 60 columns by 16 rows. It has three size
+tiers by terminal width:
+
+| Tier | Columns | Changes |
+| --- | --- | --- |
+| Wide | 120 and more | Every value shows. |
+| Medium | 80 to 119 | The Checks list shows the check names only. |
+| Narrow | 60 to 79 | The top line shows only `●` or `Ⅱ` for a recording, no Library count, and the first word of the engine state. The Record speaker row is one line. Checks shows the list alone and only the counts on the tab line. |
+
+The top of Record depends on the width and the height, so the transcript keeps
+its space in a short terminal:
+
+| Form | Size | Top of Record |
+| --- | --- | --- |
+| Full | 120 columns and 28 rows or more | REC panel and full spectra |
+| Short spectrum | 80 columns and 20 rows or more, when the full form does not apply | one status line and two short spectra |
+| Level line | every other size from 60×16 | one status line and one level line per source |
+
+The top line is one line at every size. When it is too narrow, the model name
+drops first, then `ram`, then `cpu`; the navigation and the engine state stay.
+A dialog is never wider than the terminal width minus 4 columns.
+
+Below 60 columns or 16 rows, the hub shows only one centred line, for example
+`60×16 needed · now 52×14`. A recording continues, and the screen comes back
+when the terminal is large enough again.
 
 Scrollbars stay visible. Their thin accent-colour thumbs are the only exception
 to the no-background rule; tracks and corners stay transparent.
@@ -83,7 +114,14 @@ editor does not know about.
 ## Record
 
 Record has a REC panel, a MIC meter, and a SYSTEM meter at the top. Below them,
-a speaker bar sits above the full-width transcript. Capture is local: Record never sends audio or
+a speaker bar sits above the full-width transcript. The transcript gets the
+space first. In the short-spectrum and level-line forms, the REC panel is one
+status line: the state, the clock, one note (the microphone, `started HH:MM`,
+`saved HH:MM`, or the error; not in the narrow tier), and two buttons. Each
+button keeps the width of its widest label, so a label change moves nothing.
+The session ID shows only in the full form, and the narrow tier uses short
+button labels such as `[enter] ■ Stop` and `[space] ● Record`. In the status
+line, `[d] device…` is the second button while no recording runs. Capture is local: Record never sends audio or
 transcript text over the network. Each state shows a glyph and a word, so it does not
 depend on colour.
 
@@ -124,9 +162,14 @@ panel lists each error and session, and each press of `o` shows the next session
 If you quit while a session still saves, the quit question lists it. Press `y`
 to quit after each session has saved; press `n` to keep the hub open.
 
-Each meter shows 18 frequency bands in 8 rows, the band labels
-`100 200 400 800 1k6 3k2 6k4`, the level and the 3-second peak in dBFS, and a
-speech light (`● speech` or `○ quiet`) from the voice detector of the source.
+In the full form, each meter shows 18 frequency bands in 8 rows, the band labels
+`100 200 400 800 1k6 3k2 6k4`, the level and the 3-second peak in dBFS (for
+example `-23.4`), and a speech light (`● speech` or `○ quiet`) from the voice
+detector of the source. In the short-spectrum form, the meters sit side by side with
+2 rows of bands and no band labels; the microphone head leaves `[d] device` to the
+status line, so the device name still shows at 80 columns. In the level-line form, each source is one line:
+`[m] MIC` or `[s] SYS`, a level bar from -60 to 0 dBFS, the level, and the
+speech light.
 While no recording runs, a meter shows a dotted grid and `not recording`.
 Press `m` or `s` to turn a source on or off. During a recording, the key
 changes the running session. Before a recording, the key chooses the sources
@@ -144,14 +187,19 @@ of Settings edits the saved device.
 The transcript opens in mixed view, with one time-ordered stream and speaker
 labels. Press `v` (or click `[v] ▶ mixed  split`) to switch to split view,
 where microphone and system lines appear in separate, captioned columns in time
-order. Use `up` and `down` to scroll one line, `pageup` and `pagedown` to scroll
+order. The row of scroll keys under the transcript is hidden in the narrow tier and in the
+level-line form. Use `up` and `down` to scroll one line, `pageup` and `pagedown` to scroll
 one page, and `home` and `end` to move to the top and bottom. The mouse wheel
 also scrolls the transcript. New lines stay in view while the transcript is at
 the bottom. If you scroll up, refreshes do not move the view; press `end` or
 scroll to the bottom to follow new lines again.
 
-The speaker bar lists each speaker that has transcript lines, with its talk time.
-The row wraps between speakers when it runs out of room. Each speaker shows as
+The speaker bar lists each speaker that has transcript lines, with its talk time
+(`4:12`; from 100 minutes, `1h40m`).
+The speakers take one line in the narrow tier and in a terminal of fewer than 28
+rows, and at most two lines in other sizes; they wrap between speakers, and the
+last line ends with `+N` for the speakers that do not fit. The notices wrap
+below the speakers. Each speaker shows as
 text, so it does not depend on colour. The end of the bar shows the count of failed
 phrases when there are any, `! mic stopped` (or `! system stopped`) when the capture of
 a source failed, `! mic no audio` (or `! system no audio`) while a
@@ -526,14 +574,23 @@ former Doctor and Setup sections. The checks are grouped:
 | other | each other doctor check, such as ffmpeg, the clipboard, and the overlay |
 
 Each row shows a state glyph, the check name, and a short detail that is cut
-to fit: `✓` pass, `!` warning, `×` failure. The detail pane shows the
+to fit: `✓` pass, `!` warning, `×` failure. In the medium tier the list shows
+the check names only. In the narrow tier the tab shows the list alone: press
+`enter` to show the detail of the selected check and `escape` to return to the
+list; the detail puts `[esc] ← Checks` in place of the tab names. The detail pane shows the
 selected check with its state word, the result, fix guidance when available,
 `checked HH:MM` and the related path when one applies, and the buttons
 `[f] Fix: …` (for a warning or failure that has a fix), `[t] Test: …` (when
-the area has a test), `[l] Open log`, and `[c] Copy report`.
+the area has a test), `[l] Open log`, and `[c] Copy report`. The detail scrolls when it does not fit;
+`[Q] Quick setup…`, `[m] Models…`, and `[D] Defaults…` stay at its bottom. A row of
+buttons that does not fit on one line shows one button on each line.
 
-The first row of the tab shows `N pass · N warn · N fail`, the time of the last
-run, and `[r] Run again`. The Settings navigation badge shows `N W` for warnings or `N F` for
+Checks has no frame of its own inside the Settings frame; in the wide and medium
+tiers one vertical line divides the list from the detail. The tab line shows,
+after the tab names, `N pass · N warn · N fail`, the time of the last run, and
+`[r] Run again`. In the medium tier `[r] Run again` shows only when it fits
+whole, and the time shows only when it fits whole; the narrow tier shows the
+counts only (`r` still runs the checks). The Settings navigation badge shows `NW` for warnings or `NF` for
 failures, and the tab label shows `●N` when the last run has warnings or
 failures. New optional checks appear as warnings and do not change the
 existing `stenographer doctor` exit status. The refine service check asks the
@@ -543,6 +600,8 @@ no transcript text.
 | Key | Action |
 | --- | --- |
 | `up` / `down` | Select a check. |
+| `enter` | Narrow tier: show the detail of the selected check. |
+| `escape` | Narrow tier: return from the detail to the list. |
 | `r` | Run the checks again. |
 | `f` | Fix: select the related Settings row, or open the Quick setup or Models dialog. |
 | `t` | Test the area of the selected check. |

@@ -5,20 +5,35 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 from rich.text import Text
 from textual.app import App
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Input, Select, Static
 
+from stenographer.cli.hub.checks_tab import ChecksTab
+from stenographer.cli.hub.choice_dialog import ChoiceDialog
+from stenographer.cli.hub.doctor_view import DoctorReport
+from stenographer.cli.hub.engine_status import EngineStatus
+from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.speaker_bar import SpeakerBar
+from stenographer.cli.hub.widgets.spectrum_meter_model import SpectrumMeterModel
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
-from tests.cli.hub.support import _fields, _screen_text, _speaker_bar, make_app
+from tests.cli.hub.support import (
+    _fields,
+    _layout_problems,
+    _screen_text,
+    _speaker_bar,
+    make_app,
+)
 from tests.cli.hub.test_checks_tab import _board_report
 from tests.cli.hub.test_library import FakeJob
 from tests.cli.hub.test_library import FakeServices as LibraryServices
 from tests.cli.hub.test_record_screen import _app, _services, _until
+from tests.cli.hub.test_shell import FakeSampler
 
 SIZES = ((150, 45), (120, 35))
 TEXT = "alpha bravo charlie delta echo foxtrot golf hotel india juliett kilo lima"
@@ -38,31 +53,6 @@ def _write_sessions(tmp_path, count):
         for line in ROOM_LINES:
             writer.append_line(line)
         writer.close()
-
-
-def _scrolls(node) -> bool:
-    return node.styles.overflow_y in {"auto", "scroll"}
-
-
-def _layout_problems(app) -> list[str]:
-    """Return each shown widget outside the screen or its parent, and each cut button label."""
-    screen = app.screen
-    problems = []
-    for widget in screen.query("*"):
-        region = widget.region
-        if not widget.display or not region.area:
-            continue
-        if any(_scrolls(node) for node in widget.ancestors if node is not screen):
-            continue
-        name = widget.id or type(widget).__name__
-        if not screen.region.contains_region(region):
-            problems.append(f"{name} leaves the screen: {region}")
-        parent = widget.parent
-        if parent is not screen and not parent.content_region.contains_region(region):
-            problems.append(f"{name} leaves {parent.id}: {region}")
-        if isinstance(widget, Button) and widget.label.cell_length > widget.content_size.width:
-            problems.append(f"{name} cuts its label: {widget.label}")
-    return problems
 
 
 def _selected_rows(app) -> list[str]:
@@ -132,12 +122,12 @@ async def test_record_bar_wraps_twelve_speakers_and_keeps_warnings_last(tmp_path
         app.refresh_view()
         await pilot.pause()
         bar = app.screen.query_one("#speaker-bar", Static)
-        assert bar.size.height == 2
+        assert bar.size.height == 3, "each talk time takes its 5-cell slot"
         rows = str(bar.render()).splitlines()
-        assert rows[0].startswith("Room 1 0:")
-        assert rows[-1].endswith("! 2 phrases failed   ! mic audio not saved")
+        assert rows[0].startswith("Room 1  0:")
+        assert "   ".join(rows).endswith("! 2 phrases failed   ! mic audio not saved")
         for number in range(1, 13):
-            assert f"Room {number} 0:" in "\n".join(rows), "label and time stay on one row"
+            assert f"Room {number}  0:" in "\n".join(rows), "label and time stay on one row"
         assert bar.region.bottom <= app.screen.query_one("#transcript").region.y
         session.release.set()
 
@@ -169,7 +159,7 @@ async def test_record_bar_leaves_out_a_speaker_with_no_lines(tmp_path):
         app.refresh_view()
         await pilot.pause()
         assert "Room 99" not in _screen_text(app)
-        assert "transcript · 12 speakers" in _screen_text(app)
+        assert "transcript ·  12 speakers" in _screen_text(app)
         session.release.set()
 
 
@@ -189,7 +179,7 @@ async def test_saved_record_bar_leaves_out_a_speaker_with_no_lines(tmp_path):
         await pilot.pause()
         assert app.record_screen.record_state() == "saved"
         assert "Room 99" not in _speaker_bar(app)
-        assert "transcript · 12 speakers" in _screen_text(app)
+        assert "transcript ·  12 speakers" in _screen_text(app)
 
 
 @pytest.mark.parametrize(
@@ -585,7 +575,6 @@ async def test_settings_rows_show_no_description_and_values_use_the_free_width(t
         await pilot.pause()
         # Label, marks and value only: the row ends with its value.
         row = _fields(app)[0]
-        assert row.note == ""
         text = _screen_text(app)
         agent_row = next(line for line in text.splitlines() if "Agent key" in line)
         assert agent_row.split("│")[1].split() == ["▶", "Agent", "key", "KEY_RIGHTCTRL"]
@@ -623,3 +612,1054 @@ async def test_settings_config_summary_is_the_first_row_of_the_panel(tmp_path):
         assert summary.region.y == app.screen.query_one("#config-body").content_region.y
         assert summary.region.y < app.screen.query_one("#config-rows").region.y
         assert str(summary.render()) == "config.toml · 0 unsaved changes   · backups none yet"
+
+
+# Size tiers (plan "Sizes", "Record", "Checks")
+
+TIER_SIZES = ((150, 45), (120, 35), (100, 30), (80, 24), (60, 16))
+TIMES = "\N{MULTIPLICATION SIGN}"
+
+
+def _region_problems(app, root) -> list[str]:
+    """Return the layout problems of the widgets inside ``root`` and of the top and hint rows."""
+    roots = (root, app.screen.query_one("#top-bar"), app.screen.query_one("#key-hints"))
+    return [
+        problem
+        for problem in _layout_problems(app)
+        if any(
+            problem.startswith(f"{node.id} ")
+            for top in roots
+            for node in (top, *top.query("*"))
+            if node.id
+        )
+    ]
+
+
+def _assert_one_row(app, selector):
+    widget = app.screen.query_one(selector)
+    assert widget.region.height == 1, selector
+    assert app.screen.region.contains_region(widget.region), selector
+
+
+def _assert_hints_fit(app, state):
+    hints = app.screen.query_one("#key-hints", Static)
+    plain = hints.render().plain
+    assert len(plain) <= hints.content_size.width, state
+    assert "…" not in plain, state
+    return plain
+
+
+@pytest.mark.parametrize("size", TIER_SIZES)
+async def test_record_fits_every_tier_in_each_state(tmp_path, size):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        assert _layout_problems(app) == [], "idle"
+        assert _assert_hints_fit(app, "idle").startswith("? help · q quit")
+        session = await _record_with_rooms(pilot, services, created, app)
+        assert _layout_problems(app) == [], "recording"
+        _assert_one_row(app, "#top-bar")
+        assert _assert_hints_fit(app, "recording").startswith("? help · q quit · enter")
+        frame = app.screen.query_one("#transcript-frame").region
+        assert frame.bottom == app.screen.query_one("#key-hints").region.y
+        assert app.screen.query_one("#transcript").region.height >= 3, "the transcript shows"
+        await pilot.press("space")
+        await _until(pilot, lambda: session.paused)
+        app.refresh_view()
+        await pilot.pause()
+        assert _layout_problems(app) == [], "paused"
+        await pilot.press("enter")
+        await _until(pilot, session.stop_entered.is_set)
+        app.refresh_view()
+        await pilot.pause()
+        assert _layout_problems(app) == [], "saving"
+        session.release.set()
+        await _until(pilot, lambda: not services.stopping_sessions)
+        app.refresh_view()
+        await pilot.pause()
+        assert _layout_problems(app) == [], "saved"
+        services.failed_stops.append((session, "No space left on device"))
+        app.refresh_view()
+        await pilot.pause()
+        assert _layout_problems(app) == [], "failed"
+
+
+@pytest.mark.parametrize(
+    ("size", "parts"),
+    [
+        ((100, 30), ("● REC", "00:12:08", "started", "[enter] ■ Stop & save", "[space] Ⅱ Pause")),
+        ((60, 16), ("● REC", "00:12:08", "[enter] ■ Stop", "[space] Ⅱ Pause")),
+    ],
+)
+async def test_record_panel_is_one_status_line_below_the_wide_tier(tmp_path, size, parts):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=size) as pilot:
+        session = await _record_with_rooms(pilot, services, created, app)
+        _assert_one_row(app, "#rec-panel")
+        row = _screen_text(app).splitlines()[app.screen.query_one("#rec-panel").region.y]
+        assert row.startswith(" ● REC "), row
+        positions = [row.index(part) for part in parts]
+        assert positions == sorted(positions), row
+        session.release.set()
+
+
+async def test_record_meters_shrink_in_three_steps(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        session = await _record_with_rooms(pilot, services, created, app)
+        meter = app.screen.query_one("#mic-meter")
+        assert meter.content_size.height == 11, "full spectrum"
+        assert "1k6" in _screen_text(app)
+        await pilot.resize_terminal(100, 30)
+        await pilot.pause()
+        assert 2 <= meter.content_size.height < 11, "short spectrum"
+        assert "1k6" not in _screen_text(app)
+        await pilot.resize_terminal(60, 16)
+        await pilot.pause()
+        assert meter.region.height == 1, "one level line"
+        rows = _screen_text(app).splitlines()
+        assert rows[meter.region.y].strip().startswith("[m] MIC")
+        assert rows[app.screen.query_one("#system-meter").region.y].strip().startswith("[s] SYS")
+        session.release.set()
+
+
+async def test_below_floor_shows_the_size_line_and_the_recording_continues(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(120, 35)) as pilot:
+        session = await _record_with_rooms(pilot, services, created, app)
+        await pilot.resize_terminal(59, 15)
+        await pilot.pause()
+        lines = [row.strip() for row in _screen_text(app).splitlines() if row.strip()]
+        assert lines == [f"60{TIMES}16 needed · now  59{TIMES}15"]
+        session.elapsed_seconds += 2
+        await pilot.pause(0.2)
+        assert services.recording
+        await pilot.resize_terminal(70, 15)
+        await pilot.pause()
+        assert [row.strip() for row in _screen_text(app).splitlines() if row.strip()] == [
+            f"60{TIMES}16 needed · now  70{TIMES}15"
+        ]
+        await pilot.resize_terminal(80, 24)
+        await pilot.pause(0.2)
+        assert "● 00:12:10" in _screen_text(app).splitlines()[0]
+        assert _layout_problems(app) == []
+        session.release.set()
+
+
+@pytest.mark.parametrize(
+    ("size", "shown", "hidden"),
+    [
+        ((150, 45), ("bark-pro-int8", "ready", "cpu", "ram"), ()),
+        ((100, 30), ("ready", "cpu", "ram"), ("bark-pro-int8",)),
+        ((80, 24), ("ready",), ("bark-pro-int8", "cpu", "ram")),
+        ((60, 16), ("ready",), ("bark-pro-int8", "cpu", "ram", "00:12:08")),
+    ],
+)
+async def test_top_line_drops_model_then_ram_then_cpu(tmp_path, size, shown, hidden):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=size) as pilot:
+        session = await _record_with_rooms(pilot, services, created, app)
+        session.queue_depth = 3
+        app.refresh_view()
+        await pilot.pause()
+        _assert_one_row(app, "#top-bar")
+        top = _screen_text(app).splitlines()[0]
+        for value in ("1 Record", "2 Library", "3 Settings", "●", *shown):
+            assert value in top, top
+        for value in (*hidden, " all ", "queued"):
+            assert value not in top, top
+        session.release.set()
+
+
+def test_hint_row_drops_whole_items_from_the_right_and_keeps_help():
+    from stenographer.cli.hub.widgets.key_hints import KeyHints
+
+    hints = KeyHints()
+    items = (("?", "help"), ("q", "quit"), ("enter", "stop & save"), ("space", "pause"))
+    assert hints.fitting(items, 100) == items
+    assert hints.fitting(items, 40) == items[:3]
+    assert hints.fitting(items, 15) == items[:2]
+    assert hints.fitting(items, 14) == items[:1]
+    assert hints.fitting(items, 3) == items[:1]
+
+
+async def test_hint_row_hides_help_and_quit_while_an_input_has_focus_at_60(tmp_path):
+    services, _created = _services(tmp_path)
+    _write_sessions(tmp_path, 1)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await _open_library(pilot, app, 1)
+        assert _assert_hints_fit(app, "library").startswith("? help · q quit")
+        await pilot.press("slash")
+        await pilot.pause()
+        plain = _assert_hints_fit(app, "search")
+        assert "help" not in plain
+        assert "quit" not in plain
+
+
+@pytest.mark.parametrize("size", TIER_SIZES)
+async def test_checks_fit_every_tier(tmp_path, size):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+        assert _region_problems(app, app.checks_tab) == []
+        _assert_one_row(app, "#top-bar")
+        _assert_hints_fit(app, "checks")
+        for _ in range(7):
+            await pilot.press("down")
+            await pilot.pause()
+            row = app.checks_tab.index
+            selected = [line for line in _screen_text(app).splitlines() if "▶ " in line]
+            label = report.checks[row].label
+            assert any(label in line for line in selected), f"selected row {label} shows"
+        if size[0] < 80:
+            await pilot.press("enter")
+            await pilot.pause()
+            assert _region_problems(app, app.checks_tab) == []
+
+
+async def test_checks_narrow_tier_opens_the_detail_with_enter_and_returns_with_escape(tmp_path):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+        detail = app.screen.query_one("#checks-detail")
+        listing = app.screen.query_one("#checks-list-column")
+        assert listing.display and not detail.display
+        assert "enter detail" in _assert_hints_fit(app, "list")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert detail.display and not listing.display
+        assert "sounds · warning" in _screen_text(app)
+        assert "[esc] ← Checks" in _screen_text(app)
+        assert "esc back" in _assert_hints_fit(app, "detail")
+        await pilot.press("escape")
+        await pilot.pause()
+        assert listing.display and not detail.display
+        assert app.settings_screen.tab == "checks"
+
+
+async def test_checks_wide_tier_keeps_list_and_detail_side_by_side(tmp_path):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.press("enter")
+        await pilot.pause()
+        listing = app.screen.query_one("#checks-list-column").region
+        detail = app.screen.query_one("#checks-detail").region
+        assert listing.right <= detail.x
+        assert listing.y == detail.y
+
+
+async def _open_quit(pilot, app, services, created):
+    await _record_with_rooms(pilot, services, created, app)
+    await pilot.press("q")
+
+
+async def _open_help(pilot, app, services, created):
+    await pilot.press("question_mark")
+
+
+async def _open_device(pilot, app, services, created):
+    await pilot.press("d")
+
+
+async def _open_rename(pilot, app, services, created):
+    await _record_with_rooms(pilot, services, created, app)
+    await pilot.press("r")
+
+
+async def _open_transcribe(pilot, app, services, created):
+    await pilot.press("2", "n")
+
+
+@pytest.mark.parametrize(
+    ("open_dialog", "shown"),
+    [
+        (_open_quit, ("[y] Save and quit",)),
+        (_open_help, ("[esc] Close",)),
+        (_open_device, ("[enter] Use device",)),
+        (_open_rename, ("[enter] Rename",)),
+        (_open_transcribe, ("Separate speakers", "Refine text", "[enter] Transcribe")),
+    ],
+)
+async def test_dialogs_stay_four_columns_narrower_than_the_terminal(tmp_path, open_dialog, shown):
+    services, created = _services(tmp_path, devices=(("dev-1", "USB microphone"),))
+    for number in range(20):
+        (tmp_path / f"call-{number:02d}.wav").write_bytes(b"")
+    app = _app(tmp_path, services, files_home=tmp_path)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.pause()
+        await open_dialog(pilot, app, services, created)
+        await _until(pilot, lambda: app.screen.is_modal)
+        await pilot.pause()
+        frame = app.screen.query_one("#dialog-frame, .prompt-dialog")
+        assert frame.region.width == 56, "each dialog is designed wider than 56 columns"
+        assert _layout_problems(app) == []
+        for text in shown:
+            assert text in _screen_text(app), text
+        for session in created:
+            session.release.set()
+
+
+# Fixed slots: a value changes inside its slot and nothing beside it moves.
+
+NARROW_STATUS = EngineStatus("bark-pro-int8", "idle", None, None)
+WIDEST_STATUS = EngineStatus("bark-pro-int8", "transcribing 100%", 100.0, int(99.9 * 1024**3))
+WIDEST_BADGES = {
+    "record": ("●", "00:00:00", "danger"),
+    "library": 999,
+    "settings": ("9F", "danger"),
+}
+
+
+async def _top_line(pilot, app, sampler, status, badges) -> str:
+    sampler.status = status
+    app._badges = lambda: badges
+    app.refresh_view()
+    await pilot.pause()
+    return _screen_text(app).splitlines()[0]
+
+
+@pytest.mark.parametrize("size", TIER_SIZES)
+async def test_top_line_slots_keep_every_neighbour_in_place(tmp_path, size):
+    services, _created = _services(tmp_path)
+    sampler = FakeSampler(NARROW_STATUS)
+    app = make_app(tmp_path, services, engine_sampler=sampler)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        empty = await _top_line(pilot, app, sampler, NARROW_STATUS, {})
+        widest = await _top_line(pilot, app, sampler, WIDEST_STATUS, WIDEST_BADGES)
+        assert len(widest.rstrip()) <= size[0]
+        for anchor in ("2 Library", "3 Settings", "cpu", "ram", "bark-pro-int8"):
+            assert empty.find(anchor) == widest.find(anchor), anchor
+        assert empty.index("idle") == widest.index("transcribing")
+        assert "9F" in widest and "●" in widest
+
+
+async def test_record_slots_keep_every_neighbour_in_place(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        session = await _record_with_rooms(pilot, services, created, app)
+
+        def rows():
+            text = _screen_text(app).splitlines()
+            title = text[app.screen.query_one("#transcript-head").region.y]
+            return title, _speaker_bar(app)
+
+        session.lines = [
+            TranscriptLine(0.0, 5.0, "", "mic", "room-1", "Room 1", TEXT),
+            TranscriptLine(5.0, 6.0, "", "mic", "room-2", "Room 2", TEXT),
+        ]
+        app.refresh_view()
+        await pilot.pause()
+        title, bar = rows()
+        # 99 speakers, and a first speaker with more than 100 minutes of talk.
+        session.lines = [
+            TranscriptLine(0.0, 6000.0, "", "mic", "room-1", "Room 1", TEXT),
+            *(
+                TranscriptLine(6000.0 + i, 6001.0 + i, "", "mic", f"room-{i}", f"Room {i}", TEXT)
+                for i in range(2, 100)
+            ),
+        ]
+        app.refresh_view()
+        await pilot.pause()
+        widest_title, widest_bar = rows()
+        assert widest_bar.startswith("Room 1 1h40m   Room 2 ")
+        assert bar.index("Room 2") == widest_bar.index("Room 2")
+        assert title.index("speakers") == widest_title.index("speakers")
+        assert title.index("[r] Rename") == widest_title.index("[r] Rename")
+        session.release.set()
+
+
+@pytest.mark.parametrize("size", [(100, 30), (60, 16)])
+async def test_record_status_line_keeps_the_clock_and_buttons_in_place(tmp_path, size):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=size) as pilot:
+        await pilot.pause()
+        clock = app.screen.query_one("#rec-clock-line")
+        primary = app.screen.query_one("#rec-primary")
+        secondary = app.screen.query_one("#rec-secondary")
+        idle = (clock.region.x, primary.region.x, secondary.region.x)
+        session = await _record_with_rooms(pilot, services, created, app)
+        await pilot.press("enter")
+        await _until(pilot, session.stop_entered.is_set)
+        session.release.set()
+        await _until(pilot, lambda: not services.stopping_sessions)
+        services.failed_stops.append((session, "No space left on device"))
+        app.refresh_view()
+        await pilot.pause()
+        assert app.record_screen.record_state() == "failed"
+        assert "! SAVE FAILED" in _screen_text(app)
+        failed = (clock.region.x, primary.region.x, secondary.region.x)
+        assert idle == failed
+
+
+def test_level_and_peak_slots_keep_dbfs_and_peak_in_place():
+    model = SpectrumMeterModel("mic", "Default input")
+    model.set_state("on")
+    empty = model.level_text
+    model.feed(np.full(1600, 10 ** (-99.9 / 20), dtype=np.float32))
+    widest = model.level_text
+    assert widest == " -99.9 dBFS  peak  -99.9"
+    for anchor in ("dBFS", "peak"):
+        assert empty.index(anchor) == widest.index(anchor)
+    assert len(empty) == len(widest)
+
+
+def test_checks_count_slots_keep_each_word_in_place():
+    def summary(count):
+        report = SimpleNamespace(
+            ok_count=count,
+            warn_count=count,
+            fail_count=count,
+            checked_at=datetime(2026, 11, 12, 13, 40),
+        )
+        return ChecksTab.summary_text(SimpleNamespace(report=report, checking=False)).plain
+
+    one, widest = summary(1), summary(99)
+    for anchor in ("pass", "warn", "fail", "last run"):
+        assert one.index(anchor) == widest.index(anchor), anchor
+
+
+# Review fixes of PR 51
+
+FIVE_SPEAKERS = [
+    TranscriptLine(i * 6.0, i * 6.0 + 5, "", "mic", f"room-{i % 5 + 1}", f"Room {i % 5 + 1}", TEXT)
+    for i in range(20)
+]
+
+
+async def _record_five(pilot, services, created, app):
+    session = await _record_with_rooms(pilot, services, created, app)
+    session.lines = list(FIVE_SPEAKERS)
+    app.refresh_view()
+    await pilot.pause()
+    return session
+
+
+@pytest.mark.parametrize("size", [(150, 16), (120, 16), (120, 24), (80, 16), (80, 20)])
+async def test_record_gives_the_transcript_six_lines_in_a_short_terminal(tmp_path, size):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=size) as pilot:
+        session = await _record_five(pilot, services, created, app)
+        assert app.screen.query_one("#transcript").region.height >= 6
+        assert _layout_problems(app) == []
+        session.release.set()
+
+
+@pytest.mark.parametrize("size", [(150, 45), (150, 16), (100, 30), (60, 16)])
+async def test_record_buttons_stay_in_place_when_pause_becomes_resume(tmp_path, size):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=size) as pilot:
+        session = await _record_five(pilot, services, created, app)
+
+        def positions():
+            return tuple(
+                app.screen.query_one(selector).region.x
+                for selector in ("#rec-primary", "#rec-secondary")
+            )
+
+        recording = positions()
+        await pilot.press("space")
+        await _until(pilot, lambda: session.paused)
+        app.refresh_view()
+        await pilot.pause()
+        assert "▶ Resume" in _screen_text(app)
+        assert positions() == recording
+        session.release.set()
+
+
+async def test_checks_narrow_summary_is_never_cut(tmp_path):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+
+        def summary_row():
+            row = app.screen.query_one("#checks-summary-row").region.y
+            return _screen_text(app).splitlines()[row]
+
+        listed = summary_row()
+        assert " 6 pass ·  1 warn ·  1 fail" in listed
+        assert "last run" not in listed and "…" not in listed
+        await pilot.press("enter")
+        await pilot.pause()
+        detail = summary_row()
+        assert "…" not in detail
+        assert "last run" not in detail
+        assert " 6 pass ·  1 warn ·  1 fail" in detail
+
+
+async def test_layout_problems_check_rows_inside_a_scroll_container(tmp_path):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+        assert _region_problems(app, app.checks_tab) == []
+        row = app.screen.query_one("#checks-engine")
+        row.styles.offset = (8, 0)
+        await pilot.pause()
+        assert any(p.startswith("checks-engine leaves") for p in _layout_problems(app))
+        row.styles.offset = (0, -2)
+        await pilot.pause()
+        overlaps = [p for p in _layout_problems(app) if " overlaps " in p]
+        assert any("checks-engine" in p for p in overlaps), overlaps
+
+
+async def test_narrow_speaker_row_is_one_line_with_a_count_of_the_rest(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(60, 16)) as pilot:
+        session = await _record_with_rooms(pilot, services, created, app)
+        rows = _speaker_bar(app).splitlines()
+        assert len(rows) == 1
+        assert rows[0].startswith("Room 1  0:10   Room 2")
+        shown = rows[0].count("Room ")
+        assert rows[0].endswith(f"   +{12 - shown}")
+        session.failed_phrase_count = 2
+        app.refresh_view()
+        await pilot.pause()
+        rows = _speaker_bar(app).splitlines()
+        assert len(rows) == 2
+        assert rows[1] == "! 2 phrases failed"
+        await pilot.resize_terminal(100, 30)
+        await pilot.pause()
+        assert len(_speaker_bar(app).splitlines()) > 2, "the medium tier keeps the wrap"
+        session.release.set()
+
+
+# Review fixes of PR 51, round 2
+
+WARNINGS = (
+    "13:12:04 WARN live: source_silent",
+    "11:48:30 ERROR live: system_source_failed",
+    "10:02:11 WARN live: source_silent",
+)
+
+
+@pytest.mark.parametrize("size", [(150, 16), (120, 16), (120, 24)])
+async def test_checks_fit_a_wide_short_terminal(tmp_path, size):
+    services, _created = _services(tmp_path)
+    report = _board_report(WARNINGS)
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+        selected = app.checks_tab.selected
+        assert selected.label == "sounds", "the check with Fix, Test and a path"
+        assert _layout_problems(app) == []
+        bottom = app.screen.query_one("#checks-dialog-buttons").region
+        assert bottom.bottom == app.screen.query_one("#checks-detail").content_region.bottom
+        app.screen.query_one("#checks-detail-scroll").scroll_end(animate=False, immediate=True)
+        await pilot.pause()
+        assert "10:02" in _screen_text(app), "the last warning scrolls into view"
+
+
+@pytest.mark.parametrize("size", [(120, 35), (150, 45)])
+async def test_checks_wide_keeps_the_dialog_buttons_at_the_bottom_of_the_detail(tmp_path, size):
+    services, _created = _services(tmp_path)
+    report = _board_report(WARNINGS)
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+        detail = app.screen.query_one("#checks-detail").content_region
+        row = app.screen.query_one("#checks-dialog-buttons").region
+        assert row.bottom == detail.bottom
+        assert "[Q] Quick setup…" in _screen_text(app).splitlines()[row.y]
+        assert _region_problems(app, app.checks_tab) == []
+
+
+def test_meter_head_keeps_the_device_in_place_for_each_state():
+    for source, device in (("mic", "Default input"), ("system", "default output")):
+        model = SpectrumMeterModel(source, device)
+        places = set()
+        for state in ("on", "off", "idle"):
+            model.set_state(state)
+            places.add(model.head[0].index(device))
+        assert len(places) == 1, source
+
+
+@pytest.mark.parametrize("size", [(120, 35), (100, 30)])
+async def test_system_head_does_not_change_with_speech(tmp_path, size):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=size) as pilot:
+        session = await _record_five(pilot, services, created, app)
+
+        def head():
+            row = app.screen.query_one("#system-meter").content_region.y
+            return _screen_text(app).splitlines()[row]
+
+        quiet = head()
+        assert "default output" in quiet
+        session.speech_detected["system"] = True
+        app.refresh_view()
+        await pilot.pause()
+        speech = head()
+        assert "● speech" in speech
+        assert speech.index("default output") == quiet.index("default output")
+        session.release.set()
+
+
+async def test_checks_hints_list_the_check_keys_before_the_tab_keys(tmp_path):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+        hints = _assert_hints_fit(app, "checks")
+        assert hints.startswith("? help · q quit · r run again · f fix · t test")
+        assert hints.endswith("· ←→ tab")
+
+
+@pytest.mark.parametrize("size", [*TIER_SIZES, (150, 16), (120, 16)])
+async def test_settings_fit_every_size(tmp_path, size):
+    services, _created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        assert _layout_problems(app) == [], "page"
+        _assert_one_row(app, "#top-bar")
+        _assert_hints_fit(app, "page")
+        app.settings_screen.open_setting("refine.host")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert _layout_problems(app) == [], "open input"
+
+
+async def test_settings_below_floor_shows_the_size_line(tmp_path):
+    services, _created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        await pilot.resize_terminal(59, 15)
+        await pilot.pause()
+        lines = [row.strip() for row in _screen_text(app).splitlines() if row.strip()]
+        assert lines == [f"60{TIMES}16 needed · now  59{TIMES}15"]
+        await pilot.resize_terminal(80, 24)
+        await pilot.pause()
+        assert _layout_problems(app) == []
+
+
+# Review fixes of PR 51, round 3
+
+LONG_NAMES = [
+    TranscriptLine(
+        i * 6.0, i * 6.0 + 5, "", "mic", f"long-{i % 12}", f"{i % 12:02d} " + "x" * 42, TEXT
+    )
+    for i in range(24)
+]
+
+
+@pytest.mark.parametrize("lines", [ROOM_LINES, LONG_NAMES], ids=["rooms", "long-names"])
+@pytest.mark.parametrize(
+    "size", [(150, 16), (120, 16), (120, 24), (120, 28), (100, 20), (80, 16), (80, 20), (60, 16)]
+)
+async def test_record_speaker_row_leaves_the_transcript_six_lines(tmp_path, size, lines):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=size) as pilot:
+        session = await _record_with_rooms(pilot, services, created, app)
+        session.lines = list(lines)
+        app.refresh_view()
+        await pilot.pause()
+        assert app.screen.query_one("#transcript").region.height >= 6
+        rows = _speaker_bar(app).splitlines()
+        assert len(rows) == (1 if size[1] < 28 or size[0] < 80 else 2)
+        shown = sum(row.count(" 0:") for row in rows)
+        if shown < 12:
+            assert rows[-1].endswith(f"+{12 - shown}"), rows
+        assert _layout_problems(app) == []
+        session.release.set()
+
+
+async def test_record_speaker_row_is_two_lines_at_most_in_a_tall_terminal(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(80, 40)) as pilot:
+        session = await _record_with_rooms(pilot, services, created, app)
+        session.lines = list(LONG_NAMES)
+        session.failed_phrase_count = 2
+        app.refresh_view()
+        await pilot.pause()
+        rows = _speaker_bar(app).splitlines()
+        assert len(rows) == 3
+        assert rows[1].endswith("+10")
+        assert rows[2] == "! 2 phrases failed"
+        session.release.set()
+
+
+async def test_record_line_form_hides_the_transcript_scroll_hints(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 16)) as pilot:
+        session = await _record_with_rooms(pilot, services, created, app)
+        assert "PgUp/Dn" not in _screen_text(app)
+        session.release.set()
+
+
+async def test_checks_fit_the_buttons_again_for_each_selected_check(tmp_path):
+    from tests.cli.hub.test_checks_tab import _check
+
+    report = DoctorReport(
+        (
+            _check("key_injector_ok", "input access", "input", "warn", "no access", "Fix."),
+            _check("has_mic", "microphone", "input", "warn", "no microphone", "Fix."),
+            _check("hotkey_access_ok", "hotkey", "input", "fail", "no key", "Fix."),
+        ),
+        (),
+        checked_at=datetime(2026, 10, 27, 13, 21),
+    )
+    services, _created = _services(tmp_path)
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        fixes = (
+            "[f] Fix: run quick setup",
+            "[f] Fix: choose a microphone",
+            "[f] Fix: set the hotkey",
+        )
+        for index, fix in enumerate(fixes):
+            app.checks_tab._select(index)
+            await pilot.pause()
+            await pilot.pause()
+            assert _layout_problems(app) == [], fix
+            assert fix in _screen_text(app), fix
+
+
+@pytest.mark.parametrize(
+    ("size", "summary"),
+    [
+        ((150, 45), ("6 pass", "last run 13:21", "[r] Run again")),
+        ((100, 30), ("6 pass", "last run 13:21")),
+        ((80, 24), ("6 pass", "last run 13:21")),
+        ((60, 16), ("6 pass", " 1 fail")),
+    ],
+)
+async def test_checks_summary_sits_on_the_tab_line(tmp_path, size, summary):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+        tab_row = _screen_text(app).splitlines()[app.screen.query_one("#tab-checks").region.y]
+        for part in summary:
+            assert part in tab_row, tab_row
+        assert "…" not in tab_row
+        _assert_one_checks_frame(app, divider=size[0] >= 80)
+        assert _layout_problems(app) == []
+
+
+async def test_checks_narrow_list_shows_eight_rows(tmp_path):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+        names = ("input", "engine", "other", *(check.label for check in report.checks))
+        text = _screen_text(app).splitlines()
+        shown = [row for row in text if any(f" {name} " in f" {row} " for name in names)]
+        assert len(shown) >= 8, shown
+        await pilot.press("enter")
+        await pilot.pause()
+        back = app.screen.query_one("#checks-back")
+        assert back.display and back.region.y == app.screen.query_one("#settings-tabs").region.y
+        assert _layout_problems(app) == []
+
+
+# Review fixes of PR 51, round 4
+
+
+def _no_border(edge) -> bool:
+    return edge[0] in ("", "none", "hidden")
+
+
+def _assert_one_checks_frame(app, *, divider: bool) -> None:
+    """Checks has no frame of its own; wide and medium have one line before the detail."""
+    tab = app.checks_tab
+    for side in ("top", "right", "bottom", "left"):
+        assert _no_border(getattr(tab.styles, f"border_{side}")), f"ChecksTab {side}"
+    detail = app.screen.query_one("#checks-detail")
+    for side in ("top", "right", "bottom"):
+        assert _no_border(getattr(detail.styles, f"border_{side}")), f"detail {side}"
+    if detail.display:
+        assert _no_border(detail.styles.border_left) is not divider, "detail left"
+
+
+def _tab_line(app) -> str:
+    return _screen_text(app).splitlines()[app.screen.query_one("#settings-tabs").region.y]
+
+
+def _setup_report() -> DoctorReport:
+    """A computer before setup: 5 pass, 5 warn, 5 fail, so the tab badge is ``●10``."""
+    from tests.cli.hub.test_checks_tab import _check
+
+    groups = ("input", "engine", "other")
+    checks = [
+        _check(f"{status}_{index}", f"{status} {index}", groups[index % 3], status, "detail")
+        for status in ("ok", "warn", "fail")
+        for index in range(5)
+    ]
+    return DoctorReport(tuple(checks), (), checked_at=datetime(2026, 10, 27, 13, 21))
+
+
+# The summary of each report and the first medium width that shows [r] Run again. On the
+# tab line (width - 6: the screen gutter, the frame and its padding on each side) sit
+# "  Settings" (10) and "▶ Checks ●N" (9 + the badge) with 2 cells after each, 2 cells
+# before the summary, the summary with the last run (44), and Run again (13) with its
+# 2-cell margin.
+_SUMMARIES = {
+    "board": (_board_report, " 6 pass ·  1 warn ·  1 fail", 6 + 12 + 11 + 2 + 2 + 44 + 15),
+    "setup": (_setup_report, " 5 pass ·  5 warn ·  5 fail", 6 + 12 + 12 + 2 + 2 + 44 + 15),
+}
+
+
+def _assert_summary_whole(app, label, counts, run_from) -> None:
+    line = _tab_line(app)
+    width = app.size.width
+    tier = "wide" if width >= 120 else "medium" if width >= 80 else "narrow"
+    narrow_detail = tier == "narrow" and app.checks_tab.detail_open
+    expected = counts if tier == "narrow" else counts + " · last run 13:21"
+    assert expected in line, (label, line)
+    if tier == "narrow" or narrow_detail:
+        assert "last run" not in line, (label, line)
+    shows_run = tier == "wide" or (tier == "medium" and width >= run_from)
+    assert ("[r] Run again" in line) is shows_run, (label, line)
+    assert _layout_problems(app) == [], label
+
+
+async def _open_checks(pilot, app) -> None:
+    await pilot.press("3", "left")
+    await _until(pilot, lambda: app.checks_tab.report is not None)
+    await pilot.pause()
+
+
+@pytest.mark.parametrize("name", list(_SUMMARIES))
+async def test_checks_summary_stays_whole_after_a_resize(tmp_path, name):
+    make_report, counts, run_from = _SUMMARIES[name]
+    services, _created = _services(tmp_path)
+    report = make_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _open_checks(pilot, app)
+        for size in ((60, 16), (98, 30), (97, 30), (91, 30), (90, 30), (89, 30), (120, 35)):
+            await pilot.resize_terminal(*size)
+            await pilot.pause()
+            await pilot.pause()
+            _assert_summary_whole(app, size, counts, run_from)
+        await pilot.resize_terminal(60, 16)
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        _assert_summary_whole(app, "detail", counts, run_from)
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.pause()
+        _assert_summary_whole(app, "back", counts, run_from)
+
+
+@pytest.mark.parametrize("name", list(_SUMMARIES))
+async def test_checks_summary_stays_whole_at_each_width(tmp_path, name):
+    make_report, counts, run_from = _SUMMARIES[name]
+    services, _created = _services(tmp_path)
+    report = make_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _open_checks(pilot, app)
+        for width in range(60, 151):
+            await pilot.resize_terminal(width, 35)
+            await pilot.pause()
+            await pilot.pause()
+            _assert_summary_whole(app, width, counts, run_from)
+
+
+@pytest.mark.parametrize("count", [0, 1, 9, 10, 15])
+async def test_checks_counts_stay_whole_at_60_columns_with_each_badge(tmp_path, count):
+    from tests.cli.hub.test_checks_tab import _check
+
+    checks = [_check(f"warn_{i}", f"warn {i}", "input", "warn", "detail") for i in range(count)]
+    checks.append(_check("ok_0", "ok 0", "engine"))
+    report = DoctorReport(tuple(checks), (), checked_at=datetime(2026, 10, 27, 13, 21))
+    services, _created = _services(tmp_path)
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await _open_checks(pilot, app)
+        line = _tab_line(app)
+        assert f" 1 pass · {count:>2} warn ·  0 fail" in line, line
+        assert (f"●{count}" in line) is bool(count), line
+        assert _layout_problems(app) == []
+
+
+_ALL_TAB_BUTTONS = ["config-undo", "config-reset", "config-discard", "config-save"]
+
+
+@pytest.mark.parametrize(
+    ("size", "buttons"),
+    [
+        ((150, 45), _ALL_TAB_BUTTONS),
+        ((120, 35), _ALL_TAB_BUTTONS),
+        ((100, 30), _ALL_TAB_BUTTONS),
+        ((80, 24), _ALL_TAB_BUTTONS),
+        ((60, 16), ["config-discard", "config-save"]),
+    ],
+)
+async def test_settings_tab_line_shows_each_button_that_fits(tmp_path, size, buttons):
+    services, _created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        row = app.screen.query_one("#settings-tabs")
+        shown = [
+            button.id
+            for button in row.query(HubButton)
+            if button.display and button.region.area and button.id.startswith("config-")
+        ]
+        assert shown == buttons
+        assert _layout_problems(app) == []
+
+
+@pytest.mark.parametrize("size", [(150, 45), (100, 30), (60, 16)])
+async def test_checks_detail_has_no_frame(tmp_path, size):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+        if size[0] < 80:
+            await pilot.press("enter")
+            await pilot.pause()
+        _assert_one_checks_frame(app, divider=size[0] >= 80)
+        assert _layout_problems(app) == []
+
+
+async def test_checks_back_button_click_returns_to_the_list(tmp_path):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.checks_tab.detail_open
+        assert await pilot.click("#checks-back")
+        await pilot.pause()
+        assert not app.checks_tab.detail_open
+        assert app.screen.query_one("#checks-list-column").display
+        assert "▶ ! sounds" in _screen_text(app), "the list shows the selected check"
+        assert not app.screen.query_one("#checks-back").display
+
+
+async def test_mic_head_shows_the_device_in_the_short_spectrum_form(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+
+        def head():
+            row = app.screen.query_one("#mic-meter").content_region.y
+            return _screen_text(app).splitlines()[row]
+
+        heads = {"idle": head()}
+        session = await _record_five(pilot, services, created, app)
+        heads["on"] = head()
+        await pilot.press("m")
+        await _until(pilot, lambda: "MIC off" in head())
+        heads["off"] = head()
+        places = {state: line.find("Default input") for state, line in heads.items()}
+        assert -1 not in places.values(), heads
+        assert len(set(places.values())) == 1, heads
+        assert "[d] device" not in heads["idle"]
+        session.release.set()
+
+
+async def test_checks_back_button_starts_the_tab_line(tmp_path):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(60, 16)) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.press("enter")
+        await pilot.pause()
+        back = app.screen.query_one("#checks-back").region
+        assert back.x == app.screen.query_one("#settings-tabs").content_region.x
+
+
+async def _click_mic_head_end(pilot, app) -> None:
+    """Click the last cell of the mic head, where ``[d] device`` sits in the full form."""
+    meter = app.screen.query_one("#mic-meter")
+    content = meter.content_region
+    offset = (content.right - 1 - meter.region.x, content.y - meter.region.y)
+    assert await pilot.click("#mic-meter", offset=offset)
+    await pilot.pause()
+    await pilot.pause()
+
+
+async def test_mic_head_end_click_opens_no_device_dialog_in_the_short_spectrum(tmp_path):
+    services, _created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await pilot.pause()
+        assert (
+            "[d] device"
+            not in _screen_text(app).splitlines()[
+                app.screen.query_one("#mic-meter").content_region.y
+            ]
+        )
+        await _click_mic_head_end(pilot, app)
+        assert not isinstance(app.screen, ChoiceDialog)
+
+
+async def test_mic_head_device_click_opens_the_device_dialog_in_the_full_form(tmp_path):
+    services, _created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await pilot.pause()
+        content = app.screen.query_one("#mic-meter").content_region
+        head = _screen_text(app).splitlines()[content.y][content.x : content.right]
+        assert head.endswith("[d] device"), head
+        await _click_mic_head_end(pilot, app)
+        await _until(pilot, lambda: isinstance(app.screen, ChoiceDialog))

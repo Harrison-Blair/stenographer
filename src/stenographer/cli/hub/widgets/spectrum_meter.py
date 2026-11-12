@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Draw one source meter: head, 18 bands x 8 rows, band labels and level row."""
+"""Draw one source meter: full spectrum, short spectrum or one level line, by its height."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from rich.text import Text
 from textual.widget import Widget
 
-from stenographer.cli.hub.widgets.spectrum_meter_model import SpectrumMeterModel
+from stenographer.cli.hub.widgets.spectrum_meter_model import ROWS, SpectrumMeterModel
 from stenographer.overlay.spectrum.analysis import DEFAULT_SPECTRUM_FLOOR_DBFS
 
 if TYPE_CHECKING:
@@ -23,6 +23,12 @@ _DIM = "#8b93a1"
 _LINE = "#3a4150"
 _OK = "#6ee69a"
 _REFRESH_SECONDS = 1 / 20
+# Head, 8 band rows, band labels and the level row.
+_FULL_HEIGHT = ROWS + 3
+# 18 bands with a blank between two bands.
+_SPACED_WIDTH = 35
+_LINE_LABEL = 8
+_LINE_STATE = 8
 
 
 class SpectrumMeter(Widget):
@@ -31,6 +37,10 @@ class SpectrumMeter(Widget):
     The head prints ``[m] MIC`` (or ``[s] SYSTEM``) and, while the mic is
     idle, ``[d] device``. A click on either runs the action of that key on the
     nearest ancestor that defines it, so the click and the key do the same.
+
+    The height sets the form: 11 content rows or more give the full spectrum
+    with band labels; fewer give a short spectrum without the labels; one row
+    gives one level line with a bar.
     """
 
     DEFAULT_CSS = """
@@ -40,6 +50,8 @@ class SpectrumMeter(Widget):
         border: round #3a4150;
         padding: 0 1;
     }
+    SpectrumMeter.-live.-mic { border: round #5fd7ff; }
+    SpectrumMeter.-live.-system { border: round #ffaf5f; }
     """
 
     def __init__(
@@ -56,6 +68,7 @@ class SpectrumMeter(Widget):
         super().__init__(name=name, id=id, classes=classes)
         self.model = SpectrumMeterModel(source, device, floor_dbfs=floor_dbfs, clock=clock)
         self._dirty = threading.Event()
+        self.add_class(f"-{source}")
 
     def on_mount(self) -> None:
         self._apply_border()
@@ -81,12 +94,20 @@ class SpectrumMeter(Widget):
         self.refresh()
 
     def render(self) -> Text:
+        width = max(1, self.content_size.width)
+        height = self.content_size.height
+        if height == 1:
+            return self._line(width)
         model = self.model
         on = model.state == "on"
         color = _COLORS[model.source]
-        width = max(1, self.content_size.width)
-        left, right = model.head
-        room = width - len(right) - (1 if right else 0)
+        full = height >= _FULL_HEIGHT
+        # The short spectrum leaves [d] device to the status line above it.
+        left, right = model.head_for(device_key=full)
+        # The room does not depend on the token shown now, so the device does not come and go.
+        room = width - model.right_width_for(device_key=full) - 1
+        if len(left) > room:
+            left = model.head_label
         if len(left) > room:
             left = left[: max(0, room - 1)] + "…"
         text = Text(no_wrap=True, overflow="crop")
@@ -95,11 +116,12 @@ class SpectrumMeter(Widget):
             text.append(" " * (width - len(left) - len(right)))
             text.append(right, style=_OK if model.speech and on else _DIM)
         bars = color if on else _LINE
-        for row in model.rows:
+        for row in model.band_rows(ROWS if full else max(1, height - 2)):
             text.append("\n")
-            text.append(row, style=bars)
-        text.append("\n")
-        text.append(model.scale, style=_DIM)
+            text.append(row if width >= _SPACED_WIDTH else row[::2], style=bars)
+        if full:
+            text.append("\n")
+            text.append(model.scale, style=_DIM)
         text.append("\n")
         level = model.level_text
         if on and "  peak " in level:
@@ -111,12 +133,34 @@ class SpectrumMeter(Widget):
             text.append(level)
         return text
 
+    def _line(self, width: int) -> Text:
+        """Return the one-line form: label, level bar, level and speech light."""
+        model = self.model
+        on = model.state == "on"
+        color = _COLORS[model.source]
+        text = Text(no_wrap=True, overflow="crop")
+        text.append(f"{model.line_label:<{_LINE_LABEL}}", style=f"bold {color}" if on else _DIM)
+        if not on:
+            text.append(model.level_text, style=_DIM)
+            return text
+        tail = f" {model.level_slot} dB "
+        bar = max(0, width - _LINE_LABEL - len(tail) - _LINE_STATE)
+        filled = round(bar * model.level_fraction)
+        text.append("█" * filled, style=color)
+        text.append("·" * (bar - filled), style=_LINE)
+        text.append(tail)
+        text.append(
+            f"{'● speech' if model.speech else '○ quiet':<{_LINE_STATE}}",
+            style=_OK if model.speech else _DIM,
+        )
+        return text
+
     async def on_click(self, event: events.Click) -> None:
         offset = event.get_content_offset(self)
         if offset is None or offset.y != 0:
             return
-        left, right = self.model.head
         width = self.content_size.width
+        left, right = self.model.head_for(device_key=self.content_size.height >= _FULL_HEIGHT)
         if right == "[d] device" and offset.x >= width - len(right):
             action = "choose_device"
         elif offset.x < len(left):
@@ -130,8 +174,7 @@ class SpectrumMeter(Widget):
                 return
 
     def _apply_border(self) -> None:
-        state = self.model.state
-        self.styles.border = ("round", _LINE if state == "idle" else _COLORS[self.model.source])
+        self.set_class(self.model.state != "idle", "-live")
 
     def _refresh_if_fed(self) -> None:
         if self._dirty.is_set():

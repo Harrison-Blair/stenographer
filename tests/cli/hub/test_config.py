@@ -112,7 +112,6 @@ async def test_config_message_shows_the_default_only_when_the_selected_value_dif
         app.config_editor.edit("asr.idle_unload_seconds", "60")
         app.refresh_view()
         assert "default 900" in summary.render().plain
-        assert _field(app, "Idle unload").note == ""
         app.config_editor.undo()
         app.refresh_view()
         assert "default" not in summary.render().plain

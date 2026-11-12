@@ -34,7 +34,6 @@ class Dialog[ResultType](ModalScreen[ResultType]):
     }
     Dialog > #dialog-frame {
         width: 72;
-        max-width: 90%;
         height: auto;
         max-height: 90%;
         padding: 1 2;
@@ -68,6 +67,12 @@ class Dialog[ResultType](ModalScreen[ResultType]):
                 for key, label, action in self.buttons():
                     yield HubButton(label, key=key, action=action, id=f"dialog-{action}")
 
+    def on_mount(self) -> None:
+        fit_dialog(self.query_one("#dialog-frame"), self.app.size.width)
+
+    def on_resize(self) -> None:
+        fit_dialog(self.query_one("#dialog-frame"), self.app.size.width)
+
     def compose_body(self) -> ComposeResult:
         yield Static("", markup=False)
 
@@ -79,3 +84,8 @@ class Dialog[ResultType](ModalScreen[ResultType]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+def fit_dialog(frame: Widget, terminal_width: int) -> None:
+    """Keep a dialog frame at least 4 columns narrower than the terminal."""
+    frame.styles.max_width = max(1, terminal_width - 4)

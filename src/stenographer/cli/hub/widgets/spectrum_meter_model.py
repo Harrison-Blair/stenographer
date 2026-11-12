@@ -23,6 +23,17 @@ SCALE = "100  200  400  800 1k6 3k2 6k4"
 _RATE = 16000
 _PEAK_SECONDS = 3.0
 _KEYS = {"mic": "m", "system": "s"}
+_SHORT_NAMES = {"mic": "MIC", "system": "SYS"}
+# The state word of the head (on, off, idle) has a slot, so the device does not move.
+_STATE_SLOT = 4
+# The widest right token of each source: ``● speech``, and ``[d] device`` for the mic.
+# Without the device key (the short spectrum, where the status line has it), ``● speech``.
+_RIGHT_WIDTHS = {"mic": 10, "system": 8}
+_SPEECH_WIDTH = 8
+# The level and peak slots hold ``-99.9`` and ``-inf`` right-aligned.
+_LEVEL_SLOT = 6
+# The level bar of the one-line meter spans this range below 0 dBFS.
+_BAR_RANGE_DB = 60.0
 
 
 class SpectrumMeterModel:
@@ -87,11 +98,20 @@ class SpectrumMeterModel:
             while self._levels and self._levels[0][0] < now - _PEAK_SECONDS:
                 self._levels.popleft()
 
+    def head_for(self, *, device_key: bool = True) -> tuple[str, str]:
+        """Return the left head text and the right token; ``device_key`` allows ``[d] device``."""
+        left, right = self.head
+        return (left, right) if device_key or right != "[d] device" else (left, "")
+
+    def right_width_for(self, *, device_key: bool = True) -> int:
+        """Return the cells the head keeps for its widest right token."""
+        return self.right_width if device_key else _SPEECH_WIDTH
+
     @property
     def head(self) -> tuple[str, str]:
         """Return the left head text and the right token."""
-        key = _KEYS[self.source]
-        left = f"[{key}] {self.source.upper()} {self._state} · {self.device}"
+        prefix = f"[{_KEYS[self.source]}] {self.source.upper()}"
+        left = f"{prefix} {self._state:<{_STATE_SLOT}} {self.device}"
         if self._state == "on":
             right = "● speech" if self.speech else "○ quiet"
         elif self._state == "idle" and self.source == "mic":
@@ -101,17 +121,52 @@ class SpectrumMeterModel:
         return left, right
 
     @property
+    def right_width(self) -> int:
+        """Return the cells the head keeps for its widest right token."""
+        return _RIGHT_WIDTHS[self.source]
+
+    @property
+    def head_label(self) -> str:
+        """Return the head text without the device, such as ``[m] MIC on``."""
+        return f"[{_KEYS[self.source]}] {self.source.upper()} {self._state}"
+
+    @property
+    def line_label(self) -> str:
+        """Return the label of the one-line meter, such as ``[s] SYS``."""
+        return f"[{_KEYS[self.source]}] {_SHORT_NAMES[self.source]}"
+
+    @property
     def rows(self) -> tuple[str, ...]:
         """Return 8 rows, top first; band *i* is column ``2 * i``."""
+        return self.band_rows(ROWS)
+
+    def band_rows(self, count: int) -> tuple[str, ...]:
+        """Return ``count`` rows, top first; band *i* is column ``2 * i``."""
         if self._state == "idle":
-            return (" ".join("·" * SPECTRUM_BANDS),) * ROWS
+            return (" ".join("·" * SPECTRUM_BANDS),) * count
         with self._lock:
             bands = self._bands if self._state == "on" else (0,) * SPECTRUM_BANDS
-        heights = [round(value * ROWS / 255) for value in bands]
+        heights = [round(value * count / 255) for value in bands]
         return tuple(
-            " ".join("█" if height >= ROWS - row else " " for height in heights)
-            for row in range(ROWS)
+            " ".join("█" if height >= count - row else " " for height in heights)
+            for row in range(count)
         )
+
+    @property
+    def level_fraction(self) -> float:
+        """Return the level as a share of the bar, 0 at -60 dBFS and 1 at 0 dBFS."""
+        with self._lock:
+            level = self._level
+        if not math.isfinite(level):
+            return 0.0
+        return min(1.0, max(0.0, 1 + level / _BAR_RANGE_DB))
+
+    @property
+    def level_slot(self) -> str:
+        """Return the current level in its slot."""
+        with self._lock:
+            level = self._level
+        return f"{self._dbfs(level):>{_LEVEL_SLOT}}"
 
     @property
     def scale(self) -> str:
@@ -126,8 +181,8 @@ class SpectrumMeterModel:
         with self._lock:
             level = self._level
             peak = max((value for _time, value in self._levels), default=-math.inf)
-        return f"{self._dbfs(level)} dBFS  peak {self._dbfs(peak)}"
+        return f"{self._dbfs(level):>{_LEVEL_SLOT}} dBFS  peak {self._dbfs(peak):>{_LEVEL_SLOT}}"
 
     @staticmethod
     def _dbfs(value: float) -> str:
-        return f"{value:.0f}" if math.isfinite(value) else "-inf"
+        return f"{value:.1f}" if math.isfinite(value) else "-inf"

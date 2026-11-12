@@ -182,7 +182,8 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   otherwise show help. The hub has three screens: press `1` for Record, `2`
   for Library, and `3` for Settings, and `?` for the keys of each screen. One
   top line on each screen shows navigation badges, the model state, and CPU and
-  memory use. Transcripts use the full width, under a horizontal speaker bar.
+  memory use. The hub works in terminals from 60×16; smaller terminals show the size
+  that is needed, and a recording continues. Transcripts use the full width, under a horizontal speaker bar.
   On Record, press `space` to start and `enter` to stop and save; the session
   keeps the speaker labels shown live. A line ends at a pause or where the
   speaker changes, in Record, file jobs, Re-diarize, and Re-transcribe.

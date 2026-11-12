@@ -13,7 +13,10 @@ _DIM = "#8b93a1"
 
 
 class KeyHints(Static):
-    """Show ``key description`` items; a footer starts with help and quit."""
+    """Show ``key description`` items; a footer starts with help and quit.
+
+    Whole items drop from the right until the row fits; ``? help`` always stays.
+    """
 
     DEFAULT_CSS = """
     KeyHints {
@@ -21,7 +24,6 @@ class KeyHints(Static):
         height: 1;
         padding: 0 1;
         text-wrap: nowrap;
-        text-overflow: ellipsis;
     }
     KeyHints.-panel {
         padding: 0;
@@ -44,7 +46,28 @@ class KeyHints(Static):
             if end:
                 items = self.FOOTER_END + items
         self.items = items
-        update_changed(self, self.hint_text(items, footer=self.footer))
+        self._draw()
+
+    def on_resize(self) -> None:
+        self._draw()
+
+    def _draw(self) -> None:
+        update_changed(
+            self,
+            self.hint_text(self.fitting(self.items, self.content_size.width), footer=self.footer),
+        )
+
+    def fitting(
+        self, items: tuple[tuple[str, str], ...], width: int
+    ) -> tuple[tuple[str, str], ...]:
+        """Return the items that fit ``width`` cells; whole items drop from the right.
+
+        The first item stays, so a footer keeps ``? help``.
+        """
+        kept = list(items)
+        while width and len(kept) > 1 and self.hint_text(tuple(kept), footer=True).cell_len > width:
+            kept.pop()
+        return tuple(kept)
 
     @staticmethod
     def hint_text(items: tuple[tuple[str, str], ...], *, footer: bool) -> Text:
