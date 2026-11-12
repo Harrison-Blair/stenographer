@@ -14,13 +14,11 @@ from stenographer.lib.logging.pipeline import (
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from stenographer.lib.config.models import AsrConfig
-
 from stenographer.lib.platform.asr import _JOIN_SECONDS, _child_main
 
 
 class MultiprocessingAsrProcess:
-    def __init__(self, config: AsrConfig, *, on_log: Callable[[logging.LogRecord], None]) -> None:
+    def __init__(self, *, on_log: Callable[[logging.LogRecord], None]) -> None:
         self._process = None
         self._request_q = None
         self._response_q = None

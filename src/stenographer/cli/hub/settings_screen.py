@@ -12,6 +12,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Click
 from textual.widgets import Input, Static
+from textual.widgets.input import Selection
 
 from stenographer.cli.hub.checks_tab import ChecksTab
 from stenographer.cli.hub.choice_dialog import ChoiceDialog
@@ -376,7 +377,7 @@ class SettingsScreen(HubScreen):
         reopen = None
         if self.editing is not None and self.editing in editor.visible_keys:
             typed = self.query_one("#config-input", Input)
-            reopen = (self.editing, typed.value, typed.cursor_position, self.row_error)
+            reopen = (self.editing, typed.value, typed.selection, self.row_error)
         self._close_input()
         container = self.query_one("#config-rows", VerticalScroll)
         container.remove_children()
@@ -415,11 +416,16 @@ class SettingsScreen(HubScreen):
             self.call_after_refresh(self._reopen_input, editor, *reopen)
 
     def _reopen_input(
-        self, editor: ConfigEditor, key: str, text: str, cursor: int, error: tuple[str, str] | None
+        self,
+        editor: ConfigEditor,
+        key: str,
+        text: str,
+        selection: Selection,
+        error: tuple[str, str] | None,
     ) -> None:
-        """Put back an input that a row rebuild closed, with its typed text and refusal."""
+        """Put back an input that a row rebuild closed, with its text, selection and refusal."""
         self.row_error = error
-        self.run_worker(self._open_input(editor, key, text=text, cursor=cursor))
+        self.run_worker(self._open_input(editor, key, text=text, selection=selection))
 
     @staticmethod
     def _spaced(groups: list[tuple[int, list[Static]]], *, spaced: bool) -> list[Static]:
@@ -637,7 +643,12 @@ class SettingsScreen(HubScreen):
         return exc.reason if isinstance(exc, ConfigError) else str(exc)
 
     async def _open_input(
-        self, editor: ConfigEditor, key: str, *, text: str | None = None, cursor: int | None = None
+        self,
+        editor: ConfigEditor,
+        key: str,
+        *,
+        text: str | None = None,
+        selection: Selection | None = None,
     ) -> None:
         field = self._rows.get(key)
         if field is None:
@@ -664,7 +675,10 @@ class SettingsScreen(HubScreen):
         self.app.refresh_view()
         await field.mount(editor_input)
         editor_input.focus()
-        editor_input.cursor_position = len(initial) if cursor is None else cursor
+        if selection is None:
+            editor_input.cursor_position = len(initial)
+        else:
+            editor_input.selection = selection
 
     def _close_input(self) -> None:
         self.editing = None

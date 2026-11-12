@@ -152,9 +152,7 @@ class HubServices:
 
     def warm_worker(self) -> None:
         """Start and close one child before Textual captures stderr."""
-        process = self._platform.asr_transport().spawn(
-            self._config.asr, on_log=lambda _record: None
-        )
+        process = self._platform.asr_transport().spawn(on_log=lambda _record: None)
         process.close()
 
     def start_recording(self) -> None:

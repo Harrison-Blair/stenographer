@@ -75,8 +75,7 @@ def test_hub_warms_worker_before_running_the_app(monkeypatch, tmp_path):
             events.append("close")
 
     class Transport:
-        def spawn(self, config, *, on_log):
-            assert config is cfg.asr
+        def spawn(self, *, on_log):
             assert callable(on_log)
             events.append("spawn")
             return Process()
@@ -86,7 +85,7 @@ def test_hub_warms_worker_before_running_the_app(monkeypatch, tmp_path):
         data_dir=lambda *_args: tmp_path,
     )
     monkeypatch.setattr(handler, "current_platform", lambda: platform)
-    cfg = SimpleNamespace(asr=object())
+    cfg = SimpleNamespace()
     config_path = tmp_path / "config.toml"
     from stenographer.lib.config.defaults import default_toml
 
@@ -231,7 +230,7 @@ def _prepare_hub(monkeypatch, tmp_path, run_app):
     from stenographer.lib.config.defaults import default_toml
 
     class Transport:
-        def spawn(self, _config, *, on_log):
+        def spawn(self, *, on_log):
             return SimpleNamespace(close=lambda: None)
 
     config_path = tmp_path / "config.toml"

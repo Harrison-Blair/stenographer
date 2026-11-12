@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import pytest
 from textual.containers import ScrollableContainer
+from textual.geometry import Region
 from textual.widgets import Button, Input
 
 from stenographer.cli.hub.app import HubApp
@@ -180,16 +181,26 @@ def _layout_problems(app) -> list[str]:
     problems = []
     shown = []
     for widget in screen.query("*"):
-        region = full = widget.region
+        if not widget.display or not widget.region.area:
+            continue
+        name = widget.id or type(widget).__name__
+        region = widget.region
+        parent = widget.parent
         scroll = next(
             (node for node in widget.ancestors if isinstance(node, ScrollableContainer)), None
         )
         if scroll is not None:
-            # Only the part inside the scroll view is on screen.
-            region = region.intersection(scroll.content_region)
-        if not widget.display or not region.area:
-            continue
-        name = widget.id or type(widget).__name__
+            # Scrolling moves a widget only up and down: its full width must
+            # stay inside its parent whether it is scrolled into view or not.
+            inside = parent.content_region
+            if region.x < inside.x or region.right > inside.right:
+                problems.append(f"{name} leaves {parent.id} sideways: {region}")
+            view = scroll.content_region
+            if region.y >= view.bottom or region.bottom <= view.y:
+                continue
+            # Only the rows inside the scroll view are on screen.
+            top, bottom = max(region.y, view.y), min(region.bottom, view.bottom)
+            region = Region(region.x, top, region.width, bottom - top)
         if isinstance(widget, Field) and len(widget.label) > widget.LABEL_WIDTH:
             problems.append(f"{name} cuts its label: {widget.label}")
         if isinstance(widget, Button) and widget.label.cell_length > widget.content_size.width:
@@ -197,14 +208,9 @@ def _layout_problems(app) -> list[str]:
         shown.append((widget, region))
         if not screen.region.contains_region(region):
             problems.append(f"{name} leaves the screen: {region}")
-        parent = widget.parent
-        if parent is screen:
+        if parent is screen or scroll is not None:
             continue
-        inside = parent.content_region
-        if scroll is not None:
-            if full.x < inside.x or full.right > inside.right:
-                problems.append(f"{name} leaves {parent.id} sideways: {full}")
-        elif not inside.contains_region(region):
+        if not parent.content_region.contains_region(region):
             problems.append(f"{name} leaves {parent.id}: {region}")
     for index, (widget, region) in enumerate(shown):
         for other, other_region in shown[index + 1 :]:
@@ -265,3 +271,19 @@ async def test_a_long_microphone_name_stays_on_one_row(tmp_path, size):
         microphone, volume = rows["Microphone"], rows["Volume"]
         assert microphone.virtual_region.height == 1
         assert volume.virtual_region.y == microphone.virtual_region.y + 1
+
+
+async def test_a_selection_in_an_open_input_survives_a_width_tier_change(tmp_path):
+    app = _app(tmp_path)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _open(pilot)
+        app.settings_screen.open_setting("refine.model")
+        await pilot.pause()
+        await pilot.press("enter", "ctrl+a", "ctrl+k", *"new-model", *["shift+left"] * 5)
+        await pilot.pause()
+        await pilot.resize_terminal(100, 30)
+        await pilot.pause()
+        await pilot.pause()
+        await pilot.press("x")
+        await pilot.pause()
+        assert app.screen.focused.value == "new-x"

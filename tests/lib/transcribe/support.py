@@ -58,7 +58,7 @@ class FakeAsrTransport:
         self.spawned: list[FakeAsrProcess] = []
         self.log_sinks: list[object] = []
 
-    def spawn(self, config, *, on_log):
+    def spawn(self, *, on_log):
         if self.error is not None:
             raise self.error
         child = self.pending.pop(0) if self.pending else FakeAsrProcess()
