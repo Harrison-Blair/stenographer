@@ -42,8 +42,9 @@ OFFLINE = Geometry("v3-offline")
 # i7-10875H, a mic and a system stream together cost 0.36 s of helper time per
 # second of audio while the recognizer works (the 1.04 s preset: 1.17 s, which
 # falls behind). Labels come about 4.7 s after a line ends. Frame agreement with
-# OFFLINE on four recordings is 99.9-100 %, but 95.6 % on an 82-minute meeting
-# with 6 speakers, where one extra label splits the main speaker.
+# OFFLINE is 99.9-100 % on three recordings, and 95.6 % on the fourth, an
+# 82-minute meeting with 6 speakers, where one extra label splits the main
+# speaker.
 LIVE = Geometry("v3-streaming", chunk=52)
 
 
