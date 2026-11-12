@@ -322,7 +322,7 @@ def test_a_hybrid_hold_stops_on_release(daemon_logs):
 def test_only_a_latched_hybrid_recording_arms_the_max_duration_timer():
     # The cap runs from the PRESS in every mode, so the latch arms the timer for
     # what is left of the window. Seen to FAIL against arming at the press, not
-    # arming at all, and arming for a flat max_recording_seconds.
+    # arming at all, and arming for a flat 600 seconds (the fixed cap).
     daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0), mode="hybrid")
     try:
         daemon.on_toggle_press()
@@ -332,9 +332,7 @@ def test_only_a_latched_hybrid_recording_arms_the_max_duration_timer():
         daemon.on_hybrid_release()
         assert daemon._recording is True
         assert daemon._max_timer is not None
-        assert daemon._max_timer.interval == pytest.approx(
-            daemon._cfg.audio.max_recording_seconds - 0.3, abs=0.05
-        )
+        assert daemon._max_timer.interval == pytest.approx(600 - 0.3, abs=0.05)
 
         daemon._on_max_duration(daemon._utterance_id)
         assert daemon._recording is False
@@ -963,14 +961,17 @@ def test_stop_bounds_the_total_wait_when_every_shutdown_join_is_wedged(monkeypat
         refine_warm_release.set()
 
 
-def test_the_daemon_refine_request_carries_the_vocabulary(ollama_wire):
+def test_the_daemon_refine_request_carries_the_vocabulary(ollama_wire, monkeypatch):
+    from stenographer.lib.refine import factory
+
     from .support import _Deliverer, _Feedback, _Listener, _Notifier, _Recorder, _Worker
 
+    monkeypatch.setattr(factory, "MIN_WORDS", 1)
     defaults = Config.defaults()
     cfg = dataclasses.replace(
         defaults,
         refine=dataclasses.replace(
-            defaults.refine, enabled=True, min_words=1, vocabulary=("Kubernetes", "PipeWire")
+            defaults.refine, enabled=True, vocabulary=("Kubernetes", "PipeWire")
         ),
     )
     daemon = Daemon(

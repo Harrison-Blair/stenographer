@@ -54,11 +54,6 @@ def _glob_event_nodes() -> list[str]:
     return [str(p) for p in sorted(Path("/dev/input").glob("event*"))]
 
 
-def _list_device_nodes() -> list[str]:
-    """Return every evdev-readable device path (patchable test seam)."""
-    return evdev.list_devices()
-
-
 def auto_detect_paths() -> list[str]:
     """Return every main-keyboard /dev/input/event* path, most-capable first.
 
@@ -80,42 +75,6 @@ def auto_detect_paths() -> list[str]:
             device.close()
     candidates.sort(key=lambda c: (-c[0], c[1]))
     return [path for _, path in candidates]
-
-
-def list_hotkey_devices() -> list[tuple[str, str]]:
-    """Readable evdev devices with key capabilities, as setup's ``(value, label)`` pairs."""
-    devices: list[tuple[str, str]] = []
-    try:
-        paths = _list_device_nodes()
-    except OSError as exc:
-        # WARNING: this is why setup and doctor show an empty device list.
-        log_failure(logger, logging.WARNING, "hotkey: enumerate_failed", exc, safe=True)
-        return devices
-    for path in paths:
-        try:
-            device = evdev.InputDevice(path)
-        except OSError as exc:
-            log_failure(logger, logging.DEBUG, "hotkey: device_skipped", exc, safe=True, path=path)
-            continue
-        try:
-            try:
-                has_keys = evdev.ecodes.EV_KEY in device.capabilities()
-            except OSError as exc:
-                log_failure(
-                    logger,
-                    logging.DEBUG,
-                    "hotkey: capabilities_unreadable",
-                    exc,
-                    safe=True,
-                    path=path,
-                )
-                continue
-            if has_keys:
-                devices.append((path, f"{path}: {device.name}"))
-        finally:
-            with contextlib.suppress(OSError):
-                device.close()
-    return devices
 
 
 class EvdevHotkeyListener(ChordTracker):

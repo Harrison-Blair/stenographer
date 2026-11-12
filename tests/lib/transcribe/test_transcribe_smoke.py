@@ -53,7 +53,6 @@ def _read(path: pathlib.Path):
 
 
 def test_cli_transcribe_matches_surviving_api(tmp_path, monkeypatch, capsys):
-    from stenographer import config
     from stenographer.cli import main
     from stenographer.lib.transcribe import model
     from stenographer.lib.transcribe.format import format_transcript
@@ -62,9 +61,8 @@ def test_cli_transcribe_matches_surviving_api(tmp_path, monkeypatch, capsys):
     config_path = tmp_path / "config.toml"
     config_path.write_bytes(default_toml().encode("utf-8"))
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(config_path))
-    cfg = config.Config.load(config_path)
 
-    m = model.Model(cfg.asr)
+    m = model.Model()
     try:
         expected = format_transcript(m.transcribe(samples).text)
     finally:

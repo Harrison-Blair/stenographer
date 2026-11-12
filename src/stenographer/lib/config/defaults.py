@@ -5,20 +5,13 @@ from __future__ import annotations
 
 
 def default_toml() -> str:
-    """The annotated default config, with the host's ``hotkey.device`` comment.
+    """The annotated default config.
 
-    The template is the data file ``assets/default_config.toml.in`` (the
-    ``.in`` suffix marks it as a ``str.format`` template, not loadable TOML),
-    read at write time rather than at import. What a hotkey device *is* differs
-    per host, so ``{hotkey_device_comment}`` comes from ``HostGuidance``. The
+    The template is the data file ``assets/default_config.toml.in``, read at
+    write time rather than at import.
     """
 
     from importlib.resources import files
 
-    from stenographer.lib.platform import current_platform
-
-    host = current_platform()
     template = files("stenographer").joinpath("assets", "default_config.toml.in")
-    return template.read_text(encoding="utf-8").format(
-        hotkey_device_comment=host.guidance().hotkey_device_comment,
-    )
+    return template.read_text(encoding="utf-8")

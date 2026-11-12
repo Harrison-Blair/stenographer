@@ -24,10 +24,8 @@ from stenographer.lib.platform.linux.evdev_key_table import EvdevKeyTable
 from stenographer.lib.platform.linux.hotkey import (
     EvdevHotkeyListener,
     _glob_event_nodes,
-    _list_device_nodes,
     auto_detect_paths,
     is_main_keyboard,
-    list_hotkey_devices,
 )
 
 _KEY_A = evdev.ecodes.KEY_A
@@ -158,16 +156,12 @@ def test_unopenable_explicit_device_backs_off_instead_of_spinning():
     assert calls["n"] < 20, f"listener spun {calls['n']} times in 0.3s (expected backoff)"
 
 
-def test_the_device_enumeration_seams_list_paths_without_opening_any():
-    # Both seams only name character devices under /dev/input; opening one is
+def test_the_device_enumeration_seam_lists_paths_without_opening_any():
+    # The seam only name character devices under /dev/input; opening one is
     # the caller's job, and belongs to the smoke suite.
     globbed = _glob_event_nodes()
     assert all(path.startswith("/dev/input/event") for path in globbed)
     assert globbed == sorted(globbed)
-    # evdev's own enumeration filters the very same nodes by device type, so it
-    # is always a subset of the glob — a real relationship even on a host with
-    # no input nodes at all, where it forces both to be empty.
-    assert set(_list_device_nodes()) <= set(globbed)
 
 
 def test_auto_detect_skips_event_nodes_it_cannot_open(monkeypatch, caplog):
@@ -387,31 +381,6 @@ def test_rescan_skips_a_hotplugged_node_it_cannot_open(monkeypatch, caplog):
     assert listener._devices == [known]
     assert listener._readers == []
     assert edges == []
-    assert any("device_skipped" in record.message for record in caplog.records)
-
-
-def test_listing_hotkey_devices_survives_an_unreadable_input_directory(monkeypatch, caplog):
-    """An enumeration failure leaves setup and doctor with an empty list.
-
-    This is the WARNING that explains an empty device chooser, so it has to be
-    logged rather than swallowed.
-    """
-
-    def refuse():
-        raise PermissionError(13, "Permission denied")
-
-    monkeypatch.setattr(hotkey_module, "_list_device_nodes", refuse)
-    with caplog.at_level(logging.WARNING, logger=_HOTKEY_LOGGER):
-        assert list_hotkey_devices() == []
-    assert any("enumerate_failed" in record.message for record in caplog.records)
-
-
-def test_listing_hotkey_devices_skips_the_nodes_it_cannot_open(monkeypatch, caplog):
-    monkeypatch.setattr(
-        hotkey_module, "_list_device_nodes", lambda: ["/dev/input/stenographer-nonexistent"]
-    )
-    with caplog.at_level(logging.DEBUG, logger=_HOTKEY_LOGGER):
-        assert list_hotkey_devices() == []
     assert any("device_skipped" in record.message for record in caplog.records)
 
 

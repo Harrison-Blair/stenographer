@@ -15,13 +15,11 @@ def test_doctor_hands_the_report_the_loaded_config_and_its_resolved_path(
 ):
     from stenographer.cli.doctor import report as doctor
     from stenographer.lib.config import paths
-    from stenographer.lib.logging import pipeline as logging_pipeline
 
     path = tmp_path / "cfg" / "config.toml"
     monkeypatch.setenv("STENOGRAPHER_CONFIG", str(path))
     cfg = Config.defaults()
     monkeypatch.setattr(paths, "load_or_default", lambda: cfg)
-    monkeypatch.setattr(logging_pipeline, "apply_stderr_level", lambda level: None)
 
     seen: list[object] = []
 

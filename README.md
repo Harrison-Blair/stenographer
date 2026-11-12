@@ -146,7 +146,6 @@ sound_pack = "minimal-ui"
 [stenographer.delivery]
 copy_original = true      # Agent only
 restore_clipboard = true
-restore_delay_ms = 500    # 0 to 60000
 ```
 
 CLI saves preserve comments and settings they do not know about. Restart the
@@ -166,7 +165,7 @@ behavior. Both bindings share the configured mode:
 Otherwise the transcript is pasted at your cursor. By default, when clipboard
 capture and restoration are available, your previous item is restored about
 half a second later unless you copied something newer. Configure this with
-`restore_clipboard` and `restore_delay_ms`. When Agent changes the text and
+`restore_clipboard`. When Agent changes the text and
 `stenographer.delivery.copy_original` is enabled, the app attempts to copy the
 original immediately before the rewritten text. This copy is best effort; a
 clipboard history can keep both. See
@@ -197,8 +196,8 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   re-diarize or re-transcribe, `x` to export, and `delete` to delete or cancel
   a job; confirm with `y` or cancel with `n`. Press `n` there to transcribe a file: the dialog browses from your
   home folder, including hidden folders; search with a leading dot to find hidden audio. Folder read errors show their reason. The dialog sets Separate speakers and Refine text, and
-  queues one job that shows in the list at once. Help and quit appear first in the footer. Settings values wrap when long. Settings has the General, Audio,
-  Recognition, Live, and Checks tabs; `●` marks an unsaved change, `ctrl+s`
+  queues one job that shows in the list at once. Help and quit appear first in the footer. Long Settings values are cut with `…`. Settings has two tabs: one page of
+  settings in six groups, and Checks; `●` marks an unsaved change, `ctrl+s`
   saves it with a backup, and the Vocabulary row edits the refine terms.
   Checks shows fix guidance and per-check test results, groups the system checks,
   fixes and tests the selected check, and opens the Quick setup, Models, and

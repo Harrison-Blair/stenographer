@@ -15,8 +15,8 @@ from stenographer.lib.sounds.sound_pack import SoundPack
 
 
 def preview_volume(cfg: FeedbackConfig) -> float:
-    """Return audible preview volume without mutating mute or volume settings."""
-    if cfg.mute or cfg.volume <= 0.0:
+    """Return audible preview volume without changing the volume setting."""
+    if cfg.volume <= 0.0:
         return PREVIEW_VOLUME_WHEN_MUTED
     return cfg.volume
 

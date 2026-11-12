@@ -28,11 +28,6 @@ from stenographer.cli.shared.terminal import (
     require_interactive,
     restart_service,
 )
-from stenographer.lib.config.constants import (
-    ALLOWED_LOG_LEVELS,
-    MAX_REFINE_WORDS,
-    MIN_REFINE_WORDS,
-)
 from stenographer.lib.config.errors import ConfigError, ConfigPersistenceError
 from stenographer.lib.config.models import Config
 from stenographer.lib.hotkey.binding import validate_binding
@@ -43,12 +38,10 @@ if TYPE_CHECKING:
 _SECTIONS = ("hotkey", "audio", "asr", "feedback", "refine")
 #: The keys the quick wizard edits, in the order its review screen lists them.
 _QUICK_REVIEW_FIELDS = (
-    ("hotkey", "device"),
     ("hotkey", "binding"),
     ("hotkey", "mode"),
     ("audio", "input_device"),
     ("feedback", "volume"),
-    ("feedback", "mute"),
     ("feedback", "overlay"),
     ("feedback", "sound_pack"),
     ("feedback", "spectrum_floor_dbfs"),
@@ -167,7 +160,7 @@ def quick_review_lines(config: Config) -> list[str]:
     for section_name, field_name in _QUICK_REVIEW_FIELDS:
         value = getattr(getattr(config, section_name), field_name)
         lines.append(f"  {section_name}.{field_name} = {field_display(value, field_name)}")
-    lines.append("Recording-limit and all ASR settings will be retained unchanged.")
+    lines.append("All ASR settings will be retained unchanged.")
     return lines
 
 
@@ -211,8 +204,8 @@ def refine_model_hint() -> str:
     from stenographer.lib.refine.prompt import DEFAULT_MODEL
 
     return (
-        f"Verified: {DEFAULT_MODEL} (the default, plain text), or qwen3.5:4b with "
-        "structured_output = true. Any other installed model is allowed but unverified."
+        f"Verified: {DEFAULT_MODEL} (the default). Any other installed model is allowed "
+        "but unverified."
     )
 
 
@@ -381,7 +374,7 @@ def _prompt_sound_pack(console: Console, current: str, config_dir: pathlib.Path)
 def _edit_refine_section(console: Console, config: Config, *, ask_details: bool) -> Config:
     """Prompt the refine keys both wizards share.
 
-    The full wizard also asks for the host and the word threshold; the quick
+    The full wizard also asks for the host; the quick
     wizard asks only whether to turn the stage on and which model to use, and
     keeps the configured host. Listing installed models is a read-only probe of
     the configured host and is skipped entirely while the stage stays off.
@@ -438,23 +431,6 @@ def _edit_refine_section(console: Console, config: Config, *, ask_details: bool)
             )
         ),
     )
-    if ask_details:
-        refine = dataclasses.replace(
-            refine,
-            min_words=int(
-                _prompt_number(
-                    console,
-                    "Minimum words before refining",
-                    refine.min_words,
-                    MIN_REFINE_WORDS,
-                    MAX_REFINE_WORDS,
-                    integer=True,
-                )
-            ),
-            structured_output=_prompt_bool(
-                console, "Constrain the reply with a JSON schema", refine.structured_output
-            ),
-        )
     return dataclasses.replace(config, refine=refine)
 
 
@@ -464,13 +440,6 @@ def _audio_devices() -> list[tuple[str, str]]:
     from stenographer.lib.audio.probe import input_device_choices, query_devices
 
     return input_device_choices(query_devices())
-
-
-def _hotkey_devices() -> list[tuple[str, str]]:
-    """Return the platform's selectable hotkey devices as ``(value, label)`` pairs."""
-    from stenographer.lib.platform import current_platform
-
-    return current_platform().hotkey_devices()
 
 
 def parse_device_choice(
@@ -536,11 +505,7 @@ def _edit_hotkey(console: Console, config: Config) -> Config:
     )
     hotkey = dataclasses.replace(
         hotkey,
-        device=_prompt_device(console, "Hotkey", hotkey.device, _hotkey_devices()),
         mode=_prompt_choice(console, "Trigger mode", hotkey.mode, ("hold", "toggle", "hybrid")),
-        hybrid_threshold_seconds=_prompt_number(
-            console, "Hybrid tap threshold (s)", hotkey.hybrid_threshold_seconds, 0.05, 5.0
-        ),
     )
     return dataclasses.replace(config, hotkey=hotkey)
 
@@ -551,19 +516,6 @@ def _edit_audio(console: Console, config: Config) -> Config:
         config.audio,
         input_device=_prompt_device(
             console, "Audio input", config.audio.input_device, _audio_devices()
-        ),
-    )
-    audio = dataclasses.replace(
-        audio,
-        max_recording_seconds=int(
-            _prompt_number(
-                console,
-                "Maximum recording seconds",
-                audio.max_recording_seconds,
-                1,
-                86400,
-                integer=True,
-            )
         ),
     )
     return dataclasses.replace(config, audio=audio)
@@ -581,11 +533,6 @@ def _edit_asr(console: Console, config: Config) -> Config:
                 0,
                 86400,
                 integer=True,
-            )
-        ),
-        cpu_threads=int(
-            _prompt_number(
-                console, "CPU threads (0 = auto)", config.asr.cpu_threads, 0, 64, integer=True
             )
         ),
     )
@@ -668,12 +615,10 @@ def _edit_feedback_section(
     config_dir: pathlib.Path,
     *,
     notice: Sequence[str],
-    ask_log_level: bool,
 ) -> Config:
     """Prompt the feedback keys both wizards share, then the spectrum response.
 
-    The wizards differ only in *notice* (their calibration disclaimer) and in
-    whether the log threshold is asked at all — it is not an essential. A
+    The wizards differ only in *notice* (their calibration disclaimer). A
     disabled overlay skips the spectrum question and keeps the current floor.
     """
 
@@ -681,20 +626,9 @@ def _edit_feedback_section(
     feedback = dataclasses.replace(
         config.feedback,
         volume=float(_prompt_number(console, "Cue volume", config.feedback.volume, 0.0, 1.0)),
-        mute=_prompt_bool(console, "Mute cues", config.feedback.mute),
         overlay=_prompt_bool(console, "Show lifecycle overlay", config.feedback.overlay),
         sound_pack=_prompt_sound_pack(console, config.feedback.sound_pack, config_dir),
     )
-    if ask_log_level:
-        feedback = dataclasses.replace(
-            feedback,
-            log_level=_prompt_choice(
-                console,
-                "Log level",
-                config.feedback.log_level,
-                tuple(sorted(ALLOWED_LOG_LEVELS)),
-            ),
-        )
     console.write()
     for line in notice:
         console.write(line)
@@ -719,7 +653,6 @@ def _edit_feedback(console: Console, config: Config, *, config_dir: pathlib.Path
             "IMPORTANT: spectrum calibration affects only the 18 visual bars.",
             "It never changes capture, speech detection, or transcription.",
         ),
-        ask_log_level=True,
     )
 
 
@@ -758,7 +691,6 @@ def _wizard(console: Console, initial: Config, config_dir: pathlib.Path) -> Conf
 def _capture_or_choose_binding(
     console: Console,
     current: str,
-    device: str | None,
     *,
     new_config: bool,
 ) -> str:
@@ -777,7 +709,7 @@ def _capture_or_choose_binding(
             "Press and release one key or a held chord now (15-second timeout; Ctrl-C cancels)."
         )
         try:
-            captured = current_platform().capture_binding(console.stdin, device, timeout=15.0)
+            captured = current_platform().capture_binding(console.stdin, None, timeout=15.0)
         except BindingCaptureError as exc:
             console.error(f"binding capture failed: {exc}")
         else:
@@ -956,9 +888,6 @@ def run(
         return loaded
     document = loaded
     path = document.path
-    from stenographer.lib.logging.pipeline import apply_stderr_level
-
-    apply_stderr_level(document.config.feedback.log_level)
 
     console.write("Stenographer quick setup" if quick else "Stenographer setup")
     console.write(f"Configuration: {path}")
@@ -992,7 +921,6 @@ def run(
         saved_prefix="Saved",
         unchanged_message="Configuration is unchanged; no file was written.",
     )
-    apply_stderr_level(reviewed.feedback.log_level)
 
     try:
         return _guided_setup(

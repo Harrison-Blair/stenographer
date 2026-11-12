@@ -12,45 +12,27 @@ from stenographer.lib.config.models import Config
 
 _LABELS = {
     "hotkey.binding": "Agent key",
-    "hotkey.device": "Hotkey device",
     "hotkey.cancel_binding": "Cancel key",
     "hotkey.mode": "Hotkey mode",
-    "hotkey.hybrid_threshold_seconds": "Hold threshold",
     "hotkey.general_binding": "General key",
     "audio.input_device": "Microphone",
-    "audio.max_recording_seconds": "Longest recording",
     "asr.idle_unload_seconds": "Idle unload",
-    "asr.cpu_threads": "CPU threads",
     "live.diarize_mic": "Separate room speakers",
     "refine.enabled": "Refine",
     "refine.host": "Host",
     "refine.model": "Model",
-    "refine.min_words": "Minimum words",
-    "refine.structured_output": "Structured output",
     "refine.vocabulary": "Vocabulary",
     "feedback.volume": "Volume",
-    "feedback.mute": "Mute sounds",
     "feedback.overlay": "Overlay",
     "feedback.spectrum_floor_dbfs": "Meter floor dBFS",
     "feedback.sound_pack": "Sound pack",
-    "feedback.log_level": "Log level",
     "analytics.enabled": "Usage history",
-    "analytics.resource_profiling": "Resource profiling",
     "delivery.copy_original": "Copy original",
     "delivery.restore_clipboard": "Restore clipboard",
-    "delivery.restore_delay_ms": "Restore delay",
 }
-_UNITS = {
-    "hotkey.hybrid_threshold_seconds": "s",
-    "audio.max_recording_seconds": "s",
-    "asr.idle_unload_seconds": "s",
-    "delivery.restore_delay_ms": "ms",
-}
-_CHOICES = {
-    "hotkey.mode": ("hold", "toggle", "hybrid"),
-    "feedback.log_level": ("debug", "info", "warning", "error"),
-}
-_DEVICE_KEYS = frozenset({"audio.input_device", "hotkey.device"})
+_UNITS = {"asr.idle_unload_seconds": "s"}
+_CHOICES = {"hotkey.mode": ("hold", "toggle", "hybrid")}
+_DEVICE_KEYS = frozenset({"audio.input_device"})
 # Keys whose value is not a single number although the default is one.
 _TEXT_KEYS = frozenset({"feedback.spectrum_floor_dbfs"})
 

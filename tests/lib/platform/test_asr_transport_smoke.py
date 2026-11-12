@@ -5,7 +5,6 @@ from io import StringIO
 
 import pytest
 
-from stenographer.lib.config.models import Config
 from stenographer.lib.logging.pipeline import (
     forward_worker_record,
     set_utterance,
@@ -23,11 +22,7 @@ def test_native_asr_transport_contract_and_child_log_drain(tmp_path):
     setup_logging(env={"XDG_STATE_HOME": str(tmp_path)}, home=tmp_path, stderr=stream)
     process = None
     try:
-        process = (
-            current_platform()
-            .asr_transport()
-            .spawn(Config.defaults().asr, on_log=forward_worker_record)
-        )
+        process = current_platform().asr_transport().spawn(on_log=forward_worker_record)
         assert process.pid and process.is_running() and process.exit_code is None
         with pytest.raises(TimeoutError):
             process.receive(0.01)

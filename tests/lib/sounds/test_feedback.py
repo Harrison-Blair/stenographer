@@ -222,15 +222,13 @@ def test_missing_fallback_assets_disable_only_unavailable_cues(tmp_path, caplog,
     assert len(caplog.records) == 2
 
 
-def test_preview_volume_is_audible_without_mutating_muted_settings():
-    muted = FeedbackConfig(volume=0.25, mute=True)
-    zero = FeedbackConfig(volume=0.0, mute=False)
-    configured = FeedbackConfig(volume=0.25, mute=False)
+def test_preview_volume_is_audible_without_changing_a_silent_volume():
+    zero = FeedbackConfig(volume=0.0)
+    configured = FeedbackConfig(volume=0.25)
 
-    assert preview_volume(muted) == 0.6
     assert preview_volume(zero) == 0.6
     assert preview_volume(configured) == 0.25
-    assert muted == FeedbackConfig(volume=0.25, mute=True)
+    assert zero == FeedbackConfig(volume=0.0)
 
 
 def test_four_bundled_packs_each_have_exactly_four_valid_cues():
@@ -352,7 +350,7 @@ def test_feedback_plays_the_configured_cue_at_the_configured_volume(tmp_path):
     _write_pack(tmp_path / "sounds" / "custom")
     player = RecordingCuePlayer()
     feedback = Feedback(
-        cfg=FeedbackConfig(volume=0.25, mute=False, sound_pack="custom"),
+        cfg=FeedbackConfig(volume=0.25, sound_pack="custom"),
         player=player,
         config_dir=tmp_path,
     )
@@ -375,10 +373,9 @@ def test_feedback_plays_nothing_when_inaudible_or_the_cue_is_unknown(tmp_path):
             config_dir=tmp_path,
         )
 
-    feedback_for(volume=0.25, mute=True).play("record_start")
-    feedback_for(volume=0.0, mute=False).play("record_start")
-    feedback_for(volume=-0.1, mute=False).play("record_start")
-    feedback_for(volume=0.25, mute=False).play("no_such_cue")
+    feedback_for(volume=0.0).play("record_start")
+    feedback_for(volume=-0.1).play("record_start")
+    feedback_for(volume=0.25).play("no_such_cue")
 
     assert player.played == []
 
@@ -386,7 +383,7 @@ def test_feedback_plays_nothing_when_inaudible_or_the_cue_is_unknown(tmp_path):
 def test_feedback_without_a_player_stays_silent_and_still_resolves_its_pack(tmp_path):
     _write_pack(tmp_path / "sounds" / "custom")
     feedback = Feedback(
-        cfg=FeedbackConfig(volume=0.25, mute=False, sound_pack="custom"),
+        cfg=FeedbackConfig(volume=0.25, sound_pack="custom"),
         player=None,
         config_dir=tmp_path,
     )
@@ -402,7 +399,7 @@ def test_feedback_skips_a_cue_the_partial_fallback_could_not_resolve(tmp_path, s
     (_write_pack(bundled / DEFAULT_SOUND_PACK) / "error.wav").unlink()
     player = RecordingCuePlayer()
     feedback = Feedback(
-        cfg=FeedbackConfig(volume=0.25, mute=False, sound_pack="missing"),
+        cfg=FeedbackConfig(volume=0.25, sound_pack="missing"),
         player=player,
         config_dir=tmp_path,
     )

@@ -3,43 +3,33 @@
 [stenographer.hotkey]
 binding = "KEY_RIGHTCTRL"       # Agent: cleanup for agent-directed dictation
 general_binding = "KEY_RIGHTALT"   # General: ordinary transcript cleanup
-device = ""                    # {hotkey_device_comment}
 cancel_binding = "KEY_ESC"     # global cancel; "" disables it
 mode = "hybrid"                # hold = push-to-talk; toggle = press/press; hybrid = tap or hold
-hybrid_threshold_seconds = 0.5 # hybrid only: a press held this long stops on release
 
 [stenographer.audio]
 input_device = ""              # PipeWire source name (stenographer devices); "" = default microphone
-max_recording_seconds = 600
 
 [stenographer.asr]
 idle_unload_seconds = 900      # kill the idle worker child; 0 disables
-cpu_threads = 0                # 0 = auto (physical cores, capped at 8)
 
 [stenographer.live]
 diarize_mic = false            # label room voices on the mic as Room 1, Room 2, ...; off = "You"
 
 [stenographer.feedback]
 volume = 0.6
-mute = false
 overlay = true                 # best-effort lifecycle pill; dictation is independent
 spectrum_floor_dbfs = -45.0    # scalar manual floor; setup calibration writes 18 bands
 sound_pack = "minimal-ui"      # bundled pack name or valid pack under sounds/
-log_level = "info"             # debug | info | warning | error; the file keeps debug
 
 [stenographer.refine]
 enabled = true                 # cleanup pass through a local Ollama model
 host = "http://127.0.0.1:11434" # non-loopback hosts send transcript text over the network
 model = "gemma4:e2b"           # pull it with `stenographer model download --refine`
-min_words = 10                 # shorter utterances are delivered without a refine
-structured_output = false      # some models (qwen3.5:4b) need the JSON text-field schema
 vocabulary = []                # terms refine spells exactly as written, e.g. ["PipeWire"]
 
 [stenographer.delivery]
 copy_original = true           # Agent: copy the unrefined transcript first, for clipboard history
 restore_clipboard = true       # put the previous clipboard item back after each paste
-restore_delay_ms = 500         # 0-60000; wait after the paste before restoring; daemon busy meanwhile
 
 [stenographer.analytics]
 enabled = true                # local numeric history; no audio or transcript text
-resource_profiling = true     # sample application/host resources during utterances

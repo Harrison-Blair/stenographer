@@ -16,7 +16,6 @@ import queue
 import numpy as np
 import pytest
 
-from stenographer.lib.config.models import Config
 from stenographer.lib.logging import pipeline
 from stenographer.lib.platform.asr import _child_main
 from stenographer.lib.transcribe import model as model_module
@@ -27,7 +26,7 @@ _DECODE_ERROR = "decoder said: the quick brown fox"
 class _FailingModel:
     cpu_threads = 1
 
-    def __init__(self, cfg) -> None:
+    def __init__(self) -> None:
         pass
 
     def transcribe(self, samples):
@@ -55,7 +54,7 @@ def _run_child(requests: list[tuple]) -> tuple[queue.Queue, list[logging.LogReco
         logger.removeHandler(handler)
     level, propagate = logger.level, logger.propagate
     try:
-        _child_main(Config.loads("").asr, request_q, response_q, log_q, logging.DEBUG)
+        _child_main(request_q, response_q, log_q, logging.DEBUG)
     finally:
         for handler in list(logger.handlers):
             logger.removeHandler(handler)

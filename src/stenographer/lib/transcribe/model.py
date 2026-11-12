@@ -18,8 +18,6 @@ if TYPE_CHECKING:
 
     import numpy as np
 
-    from stenographer.lib.config.models import AsrConfig
-
 from stenographer.lib.transcribe.decode import (
     _assemble,
     decode_segments,
@@ -39,17 +37,13 @@ _PAD_SECONDS = 0.25
 class Model:
     def __init__(
         self,
-        cfg: AsrConfig,
         *,
         recognizer: object | None = None,
         data_dir: Path | None = None,
     ) -> None:
         from stenographer.lib.platform import current_platform
 
-        # An explicit thread count short-circuits the host probe entirely.
-        cpu_threads = cfg.cpu_threads or resolve_cpu_threads(
-            0, current_platform().physical_core_count()
-        )
+        cpu_threads = resolve_cpu_threads(current_platform().physical_core_count())
         started = time.monotonic()
         self._impl = recognizer if recognizer is not None else self._load(cpu_threads, data_dir)
         self.cpu_threads = cpu_threads

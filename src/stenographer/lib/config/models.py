@@ -10,14 +10,10 @@ from itertools import combinations
 
 from stenographer.lib.config.constants import (
     ALLOWED_HOTKEY_MODES,
-    ALLOWED_LOG_LEVELS,
     DEFAULT_SOUND_PACK,
-    MAX_REFINE_WORDS,
-    MAX_RESTORE_DELAY_MS,
     MAX_SPECTRUM_FLOOR_DBFS,
     MAX_VOCABULARY_TERM_CHARS,
     MAX_VOCABULARY_TERMS,
-    MIN_REFINE_WORDS,
     MIN_SPECTRUM_FLOOR_DBFS,
     SOUND_PACK_PATTERN,
     SpectrumFloor,
@@ -29,7 +25,7 @@ from stenographer.lib.hotkey.errors import BindingError
 from stenographer.lib.hotkey.keycodes import CODE_NAMES, KEY_CODES
 from stenographer.lib.platform import current_platform
 from stenographer.lib.refine.endpoints import validated_host
-from stenographer.lib.refine.prompt import DEFAULT_MODEL, DEFAULT_STRUCTURED_OUTPUT
+from stenographer.lib.refine.prompt import DEFAULT_MODEL
 
 
 @dataclass(frozen=True)
@@ -42,33 +38,27 @@ class HotkeyConfig:
     """
 
     binding: str = "KEY_RIGHTCTRL"
-    device: str | None = None
     cancel_binding: str | None = "KEY_ESC"
     mode: str = "hybrid"
-    hybrid_threshold_seconds: float = 0.5
     general_binding: str = "KEY_RIGHTALT"
 
 
 @dataclass(frozen=True)
 class AudioConfig:
     input_device: str | None = None
-    max_recording_seconds: int = 600
 
 
 @dataclass(frozen=True)
 class AsrConfig:
     idle_unload_seconds: int = 900
-    cpu_threads: int = 0
 
 
 @dataclass(frozen=True)
 class FeedbackConfig:
     volume: float = 0.6
-    mute: bool = False
     overlay: bool = True
     spectrum_floor_dbfs: SpectrumFloor = -45.0
     sound_pack: str = DEFAULT_SOUND_PACK
-    log_level: str = "info"
 
 
 @dataclass(frozen=True)
@@ -78,8 +68,6 @@ class RefineConfig:
     enabled: bool = True
     host: str = "http://127.0.0.1:11434"
     model: str = DEFAULT_MODEL
-    min_words: int = 10
-    structured_output: bool = DEFAULT_STRUCTURED_OUTPUT
     vocabulary: tuple[str, ...] = ()
 
 
@@ -89,7 +77,6 @@ class DeliveryConfig:
 
     copy_original: bool = True
     restore_clipboard: bool = True
-    restore_delay_ms: int = 500
 
 
 @dataclass(frozen=True)
@@ -102,7 +89,6 @@ class LiveConfig:
 @dataclass(frozen=True)
 class AnalyticsConfig:
     enabled: bool = True
-    resource_profiling: bool = True
 
 
 @dataclass(frozen=True)
@@ -225,14 +211,6 @@ class _Reader:
             raise self._err(key, f"must be one of {sorted(allowed)}, got {value!r}")
         return value
 
-    def folded_choice(self, key: str, allowed: frozenset[str]) -> str:
-        """A choice matched case-insensitively; the canonical lower-case name is kept."""
-        raw = self.str(key)
-        value = raw.casefold()
-        if value not in allowed:
-            raise self._err(key, f"must be one of {sorted(allowed)}, got {raw!r}")
-        return value
-
     def spectrum_floor(self, key: str) -> SpectrumFloor:
         value = self.table.get(key)
         if isinstance(value, int | float) and not isinstance(value, bool):
@@ -285,10 +263,8 @@ def _build_hotkey(table: dict, path: pathlib.Path) -> HotkeyConfig:
     _validate_binding_overlap(path, binding, general_binding, cancel_binding)
     return HotkeyConfig(
         binding,
-        r.optional_str("device"),
         cancel_binding,
         r.choice("mode", ALLOWED_HOTKEY_MODES),
-        r.ranged_number("hybrid_threshold_seconds", 0.05, 5.0),
         general_binding,
     )
 
@@ -369,18 +345,12 @@ def _migrate_hotkey_defaults(merged: dict, overlay: dict, path: pathlib.Path) ->
 
 def _build_audio(table: dict, path: pathlib.Path) -> AudioConfig:
     r = _Reader(table, path, "audio")
-    return AudioConfig(
-        r.optional_str("input_device"),
-        r.ranged_int("max_recording_seconds", 1, 86400),
-    )
+    return AudioConfig(r.optional_str("input_device"))
 
 
 def _build_asr(table: dict, path: pathlib.Path) -> AsrConfig:
     r = _Reader(table, path, "asr")
-    return AsrConfig(
-        idle_unload_seconds=r.ranged_int("idle_unload_seconds", 0, 86400),
-        cpu_threads=r.ranged_int("cpu_threads", 0, 64),
-    )
+    return AsrConfig(idle_unload_seconds=r.ranged_int("idle_unload_seconds", 0, 86400))
 
 
 def _build_feedback(table: dict, path: pathlib.Path) -> FeedbackConfig:
@@ -394,11 +364,9 @@ def _build_feedback(table: dict, path: pathlib.Path) -> FeedbackConfig:
         )
     return FeedbackConfig(
         volume=r.ranged_number("volume", 0.0, 1.0),
-        mute=r.bool("mute"),
         overlay=r.bool("overlay"),
         spectrum_floor_dbfs=r.spectrum_floor("spectrum_floor_dbfs"),
         sound_pack=sound_pack,
-        log_level=r.folded_choice("log_level", ALLOWED_LOG_LEVELS),
     )
 
 
@@ -416,8 +384,6 @@ def _build_refine(table: dict, path: pathlib.Path) -> RefineConfig:
         enabled=r.bool("enabled"),
         host=host,
         model=model,
-        min_words=r.ranged_int("min_words", MIN_REFINE_WORDS, MAX_REFINE_WORDS),
-        structured_output=r.bool("structured_output"),
         vocabulary=_vocabulary(r, path),
     )
 
@@ -447,9 +413,7 @@ def _vocabulary(r: _Reader, path: pathlib.Path) -> tuple[str, ...]:
 
 def _build_analytics(table: dict, path: pathlib.Path) -> AnalyticsConfig:
     r = _Reader(table, path, "analytics")
-    return AnalyticsConfig(
-        enabled=r.bool("enabled"), resource_profiling=r.bool("resource_profiling")
-    )
+    return AnalyticsConfig(enabled=r.bool("enabled"))
 
 
 def _build_live(table: dict, path: pathlib.Path) -> LiveConfig:
@@ -462,7 +426,6 @@ def _build_delivery(table: dict, path: pathlib.Path) -> DeliveryConfig:
     return DeliveryConfig(
         copy_original=r.bool("copy_original"),
         restore_clipboard=r.bool("restore_clipboard"),
-        restore_delay_ms=r.ranged_int("restore_delay_ms", 0, MAX_RESTORE_DELAY_MS),
     )
 
 

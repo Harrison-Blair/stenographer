@@ -374,13 +374,13 @@ def test_checks_run_again_button_starts_a_new_run(tmp_path):
     ("check_id", "expected"),
     [
         ("key_injector_ok", QuickSetupDialog),
-        ("has_mic", ("audio", "audio.input_device")),
-        ("hotkey_access_ok", ("general", "hotkey.binding")),
-        ("cue_player", ("general", "feedback.sound_pack")),
+        ("has_mic", ("settings", "audio.input_device")),
+        ("hotkey_access_ok", ("settings", "hotkey.binding")),
+        ("cue_player", ("settings", "feedback.sound_pack")),
         ("model_cached", ModelsDialog),
-        ("refine_service", ("recognition", "refine.host")),
-        ("overlay", ("general", "feedback.overlay")),
-        ("clipboard_restore", ("general", "delivery.restore_clipboard")),
+        ("refine_service", ("settings", "refine.host")),
+        ("overlay", ("settings", "feedback.overlay")),
+        ("clipboard_restore", ("settings", "delivery.restore_clipboard")),
     ],
 )
 def test_checks_fix_opens_the_setting_row_or_the_dialog(tmp_path, check_id, expected):
@@ -416,7 +416,7 @@ def test_checks_fix_click_runs_the_same_fix_as_the_key(tmp_path):
             await _open_checks(pilot)
             await pilot.click("#checks-fix")
             await pilot.pause()
-            assert app.settings_screen.tab == "general"
+            assert app.settings_screen.tab == "settings"
             assert app.config_editor.selected_key == "feedback.sound_pack"
 
     asyncio.run(exercise())
@@ -750,7 +750,7 @@ def test_checks_quick_setup_tests_edits_and_closes(tmp_path):
             await pilot.press("down", "e")
             await pilot.pause()
             assert not isinstance(app.screen, QuickSetupDialog)
-            assert app.settings_screen.tab == "audio"
+            assert app.settings_screen.tab == "settings"
             assert app.config_editor.selected_key == "audio.input_device"
 
     asyncio.run(exercise())

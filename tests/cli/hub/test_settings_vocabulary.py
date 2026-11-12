@@ -18,7 +18,6 @@ from tests.cli.hub.test_settings_tabs import (
     _field,
     _plain,
     _screen_text,
-    _select,
 )
 
 FAIL = "\N{MULTIPLICATION SIGN}"
@@ -28,9 +27,8 @@ _WITH_TERMS = default_toml().replace("vocabulary = []", 'vocabulary = ["alpha", 
 
 async def _open_vocabulary(pilot):
     await pilot.press("3")
-    pilot.app.settings_screen.select_tab("recognition")
+    pilot.app.settings_screen.open_setting("refine.vocabulary")
     await pilot.pause()
-    await _select(pilot, "Vocabulary")
     await pilot.press("enter")
     await pilot.pause()
     assert isinstance(pilot.app.screen, VocabularyDialog)
@@ -126,12 +124,13 @@ async def test_settings_vocabulary_row_shows_its_default_when_it_differs(tmp_pat
     app = HubApp(IdleServices(), config_editor=ConfigEditor(path))
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("3")
-        app.settings_screen.select_tab("recognition")
+        app.settings_screen.open_setting("refine.vocabulary")
         await pilot.pause()
-        assert _field(app, "Vocabulary").note == "default 0 terms"
+        summary = app.screen.query_one("#config-summary")
+        assert "default 0 terms" in summary.render().plain
         app.settings_screen._apply("refine.vocabulary", ())
         await pilot.pause()
-        assert _field(app, "Vocabulary").note == ""
+        assert "default" not in summary.render().plain
 
 
 async def test_vocabulary_dialog_shows_only_the_term_count(tmp_path):

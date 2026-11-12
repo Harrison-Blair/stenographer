@@ -40,11 +40,11 @@ def _create_session(cfg: Config, platform: Platform, *, pids: Callable[[], Seque
         **technical_context(cfg),
         **platform.runtime_context(),
         "app_version": __version__,
-        "cpu_threads": resolve_cpu_threads(cfg.asr.cpu_threads, platform.physical_core_count()),
+        "cpu_threads": resolve_cpu_threads(platform.physical_core_count()),
     }
     with contextlib.suppress(PackageNotFoundError):
         context["runtime_version"] = version("sherpa-onnx")
-    probe = platform.resource_probe() if cfg.analytics.resource_profiling else None
+    probe = platform.resource_probe()
     identity = None
     with contextlib.suppress(Exception):
         identity = platform.process_identity()

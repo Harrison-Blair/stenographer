@@ -199,48 +199,6 @@ def test_main_flushes_the_log_queue_before_returning(monkeypatch, tmp_path, caps
     assert "daemon: stopping step=499" in written
 
 
-def test_with_config_applies_the_configured_log_level(monkeypatch, tmp_path):
-    """Every config-reading command gets the threshold, not just ``run``.
-
-    Seen to FAIL with the call living in ``cmd_run`` (a handler wrapped by
-    ``with_config`` still logged at INFO under `log_level = "error"`).
-    """
-
-    import argparse
-    import dataclasses
-    import logging
-    from io import StringIO
-
-    import stenographer.lib.config.models as config
-    import stenographer.lib.config.paths as config_paths
-    from stenographer.cli.shared.config import with_config
-    from stenographer.lib.logging.pipeline import fmt_event, setup_logging, shutdown_logging
-
-    defaults = config.Config.defaults()
-    quiet = dataclasses.replace(
-        defaults, feedback=dataclasses.replace(defaults.feedback, log_level="error")
-    )
-    monkeypatch.setattr(config_paths, "load_or_default", lambda: quiet)
-    monkeypatch.delenv("STENOGRAPHER_LOG_LEVEL", raising=False)
-
-    def handler(args, cfg):
-        logging.getLogger("stenographer.doctor").info(fmt_event("doctor", "probing"))
-        logging.getLogger("stenographer.doctor").error(fmt_event("doctor", "refused"))
-        return 0
-
-    shutdown_logging()
-    stream = StringIO()
-    setup_logging(env={"XDG_STATE_HOME": str(tmp_path)}, home=tmp_path, stderr=stream)
-    try:
-        assert with_config(handler)(argparse.Namespace()) == 0
-    finally:
-        shutdown_logging()
-
-    written = stream.getvalue()
-    assert "doctor: probing" not in written
-    assert "doctor: refused" in written
-
-
 def test_run_dispatches_config_to_daemon(monkeypatch):
     # `run` loads config and hands it to daemon.run, returning its exit code.
     # daemon.run is stubbed here to verify wiring only (not to assert a mocked
@@ -249,7 +207,6 @@ def test_run_dispatches_config_to_daemon(monkeypatch):
     import stenographer.lib.config.models as config
     import stenographer.lib.config.paths as config_paths
 
-    # A real Config: `run` reads feedback.log_level off it before dispatching.
     sentinel = config.Config.defaults()
     monkeypatch.setattr(config_paths, "load_or_default", lambda: sentinel)
     seen = {}

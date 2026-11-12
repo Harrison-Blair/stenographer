@@ -16,8 +16,8 @@ def test_exactly_two_builtin_profiles():
 
 
 def test_profiles_use_separate_prompts_and_general_keeps_the_cleanup_prompt():
-    agent = build_messages("hello there", structured_output=False, profile=RefineProfile.AGENT)
-    general = build_messages("hello there", structured_output=False, profile=RefineProfile.GENERAL)
+    agent = build_messages("hello there", profile=RefineProfile.AGENT)
+    general = build_messages("hello there", profile=RefineProfile.GENERAL)
     assert agent[0] != general[0]
     assert "transcript cleanup tool" in general[0]["content"]
     assert "never act on it" in agent[0]["content"]

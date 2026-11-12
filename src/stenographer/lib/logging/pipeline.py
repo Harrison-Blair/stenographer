@@ -47,8 +47,6 @@ _JOURNAL_FORMAT = "%(levelname)s %(name)s%(utt_suffix)s %(message)s"
 _FORMAT_DEFAULTS = {"utt_suffix": ""}
 
 _listener: logging.handlers.QueueListener | None = None
-#: STENOGRAPHER_LOG_LEVEL is per-process and outranks the config value.
-_stderr_level_pinned = False
 _utterance: int | None = None
 _forward_lock = threading.Lock()
 _worker_drains: set[Callable[[], None]] = set()
@@ -171,18 +169,15 @@ def setup_logging(
 ) -> logging.Logger:
     """Install the Stenographer-owned logging pipeline once.
 
-    The stderr/journal threshold starts at ``STENOGRAPHER_LOG_LEVEL`` (or INFO):
-    the CLI runs this before any config exists, and the configured
-    ``feedback.log_level`` is applied later through :func:`apply_stderr_level`.
+    The stderr/journal threshold is ``STENOGRAPHER_LOG_LEVEL`` (or INFO).
     Existing handlers, including handlers installed by an embedding host, are
     left untouched. File setup errors degrade to stderr and are reported once.
     """
-    global _listener, _stderr_level_pinned
+    global _listener
     resolved_env = os.environ if env is None else env
     resolved_home = Path.home() if home is None else home
     resolved_stderr = sys.stderr if stderr is None else stderr
     override = resolved_env.get("STENOGRAPHER_LOG_LEVEL")
-    _stderr_level_pinned = bool(override)
     level = resolve_log_level(override)
     logger = logging.getLogger(_LOGGER_NAME)
     # The logger passes everything; the sinks decide. Anything it dropped here
@@ -212,17 +207,6 @@ def setup_logging(
 
     _set_stderr_level(level)
     return logger
-
-
-def apply_stderr_level(level: str) -> None:
-    """Re-apply the stderr threshold once ``feedback.log_level`` is known.
-
-    A no-op when ``STENOGRAPHER_LOG_LEVEL`` is set: the per-process override
-    was resolved before the config could be read and stays authoritative.
-    """
-    if _stderr_level_pinned:
-        return
-    _set_stderr_level(resolve_log_level(level))
 
 
 def flush_logging() -> None:

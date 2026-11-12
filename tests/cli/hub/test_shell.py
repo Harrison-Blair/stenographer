@@ -216,27 +216,29 @@ async def test_shell_show_library_selects_listed_unloaded_and_unknown_sessions(t
         assert notice.severity == "warning"
 
 
-async def test_shell_open_setting_selects_tab_and_row_and_keeps_unsaved_changes(tmp_path):
+async def test_shell_open_setting_selects_the_row_and_keeps_unsaved_changes(tmp_path):
     app = HubApp(IdleServices(), config_editor=ConfigEditor(_config_path(tmp_path)))
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.pause()
         app.config_editor.edit("hotkey.binding", "KEY_F9")
-        app.open_setting("asr.cpu_threads")
+        app.open_setting("asr.idle_unload_seconds")
         await pilot.pause()
         assert app.current_mode == "settings"
-        assert app.settings_screen.tab == "recognition"
-        assert app.config_editor.selected_key == "asr.cpu_threads"
+        assert app.settings_screen.tab == "settings"
+        assert app.config_editor.selected_key == "asr.idle_unload_seconds"
         assert app.config_editor.config.hotkey.binding == "KEY_F9"
         assert not app.screen.query("#config-prompt-message")
 
+        await pilot.press("left")
+        assert app.settings_screen.tab == "checks"
         app.open_setting("live.diarize_mic")
         await pilot.pause()
-        assert app.settings_screen.tab == "live"
+        assert app.settings_screen.tab == "settings"
         assert app.config_editor.selected_key == "live.diarize_mic"
         assert app.config_editor.dirty
 
-        await pilot.press("left", "left")
-        assert app.settings_screen.tab == "audio"
+        await pilot.press("left")
+        assert app.settings_screen.tab == "checks"
         assert app.config_editor.dirty
         assert not app.screen.query("#config-prompt-message")
 
@@ -299,31 +301,34 @@ def test_shell_session_release_needs_the_owner(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("tab", "key", "expected"),
+    ("setting", "key", "expected"),
     [
-        ("general", "enter", "input hotkey.binding"),
-        ("audio", "enter", "Microphone"),
-        ("recognition", "enter", "input asr.idle_unload_seconds"),
-        ("live", "enter", "toggled live.diarize_mic"),
-        ("checks", "r", "probe"),
+        ("hotkey.binding", "enter", "input hotkey.binding"),
+        ("audio.input_device", "enter", "Microphone"),
+        ("asr.idle_unload_seconds", "enter", "input asr.idle_unload_seconds"),
+        ("live.diarize_mic", "enter", "toggled live.diarize_mic"),
+        (None, "r", "probe"),
     ],
 )
-async def test_shell_settings_tab_keys_reach_the_active_tab(tmp_path, tab, key, expected):
+async def test_shell_settings_tab_keys_reach_the_active_tab(tmp_path, setting, key, expected):
     probes = []
     app = HubApp(
         IdleServices(),
         config_editor=ConfigEditor(_config_path(tmp_path)),
         doctor_probe=lambda _config: probes.append("probe") or _report("ok"),
     )
-    app.settings_screen.list_devices = lambda _key: []
+    app.settings_screen.list_devices = lambda: []
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("3")
-        app.settings_screen.select_tab(tab)
+        if setting is None:
+            app.settings_screen.select_tab("checks")
+        else:
+            app.settings_screen.open_setting(setting)
         await pilot.pause(0.1)
         before = len(probes)
         await pilot.press(key)
         await pilot.pause(0.1)
-        if tab == "checks":
+        if setting is None:
             assert len(probes) == before + 1
         elif expected.startswith("input "):
             assert isinstance(app.screen.focused, Input)
@@ -352,7 +357,7 @@ async def test_shell_guard_asks_before_leaving_settings_with_unsaved_changes(
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("3")
         await pilot.pause()
-        app.config_editor.edit("asr.cpu_threads", "5")
+        app.config_editor.edit("asr.idle_unload_seconds", "5")
         if leave == "key":
             await pilot.press("1")
         elif leave == "click":
@@ -363,17 +368,17 @@ async def test_shell_guard_asks_before_leaving_settings_with_unsaved_changes(
         assert _prompt_text(app) == "Save or discard unsaved configuration changes?"
         await pilot.click(f"#choice-{choice}")
         await pilot.pause()
-        saved = Config.load(path).asr.cpu_threads
+        saved = Config.load(path).asr.idle_unload_seconds
         if choice == "stay":
             assert app.current_mode == "settings"
             assert app.config_editor.dirty
-            assert saved == Config.defaults().asr.cpu_threads
+            assert saved == Config.defaults().asr.idle_unload_seconds
         else:
             assert app.current_mode == destination
             assert not app.config_editor.dirty
-            expected = 5 if choice == "save" else Config.defaults().asr.cpu_threads
+            expected = 5 if choice == "save" else Config.defaults().asr.idle_unload_seconds
             assert saved == expected
-            assert app.config_editor.config.asr.cpu_threads == expected
+            assert app.config_editor.config.asr.idle_unload_seconds == expected
 
 
 @pytest.mark.parametrize(
@@ -392,15 +397,15 @@ async def test_shell_guard_buttons_print_their_keys_and_the_keys_choose(
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("3")
         await pilot.pause()
-        app.config_editor.edit("asr.cpu_threads", "5")
+        app.config_editor.edit("asr.idle_unload_seconds", "5")
         await pilot.press("1")
         await pilot.pause()
         assert label in _screen_rows_text(app)
         await pilot.press(key)
         await pilot.pause()
         assert app.current_mode == destination
-        default = Config.defaults().asr.cpu_threads
-        assert Config.load(path).asr.cpu_threads == (expected or default)
+        default = Config.defaults().asr.idle_unload_seconds
+        assert Config.load(path).asr.idle_unload_seconds == (expected or default)
         assert app.config_editor.dirty is (destination == "settings")
 
 
@@ -413,7 +418,7 @@ async def test_shell_guard_runs_on_quit_from_settings(tmp_path):
     app = HubApp(IdleServices(), config_editor=ConfigEditor(path))
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("3")
-        app.config_editor.edit("asr.cpu_threads", "5")
+        app.config_editor.edit("asr.idle_unload_seconds", "5")
         await pilot.press("q")
         await pilot.pause()
         assert _prompt_text(app) == "Save or discard unsaved configuration changes?"
@@ -450,10 +455,9 @@ def _tab_bar_rows(app: HubApp) -> list[str]:
     return [row[region.x : region.right] for row in rows]
 
 
-@pytest.mark.parametrize("tab", ["general", "recognition", "checks"])
+@pytest.mark.parametrize("tab", ["settings", "checks"])
 def test_shell_settings_tab_bar_marks_the_active_tab_in_plain_text(tab, tmp_path):
-    labels = {"general": "General", "audio": "Audio", "recognition": "Recognition"}
-    labels |= {"live": "Live", "checks": "Checks"}
+    labels = {"settings": "Settings", "checks": "Checks"}
 
     async def exercise():
         app = make_app(tmp_path, IdleServices(), doctor_probe=lambda _config: _report("ok"))
@@ -465,7 +469,7 @@ def test_shell_settings_tab_bar_marks_the_active_tab_in_plain_text(tab, tmp_path
             assert text.count("▶") == 1, text
             assert f"▶ {labels[tab]}" in text, text
             widths = [app.screen.query_one(f"#tab-{name}").outer_size.width for name in labels]
-            app.settings_screen.select_tab("live" if tab != "live" else "audio")
+            app.settings_screen.select_tab("checks" if tab != "checks" else "settings")
             await pilot.pause()
             moved = [app.screen.query_one(f"#tab-{name}").outer_size.width for name in labels]
             assert moved == widths, "a tab change does not move the other tabs"

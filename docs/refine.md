@@ -16,8 +16,7 @@ there.
 
 There are exactly two built-ins. The hotkey captures the selected profile when
 recording starts; it cannot change during that utterance. Both profiles share
-the configured host, model, structured-output setting, ten-word minimum, and
-model residency lifecycle.
+the configured host, model, ten-word minimum, and model residency lifecycle.
 
 - **Agent** (Right Ctrl, and the default for upgraded partial configs) rewrites
   jumbled requests into concise instructions for an agent. It can substantially
@@ -47,8 +46,7 @@ It does not compare the input and output for names, numbers, literals, negations
 uncertainty, conditions, scope, or authorization. It has no input/output length
 ratio limit. A parsed, non-empty, untruncated rewrite is accepted after one
 wrapping quote pair or code fence is removed; a reply still wrapped after that
-is rejected. Malformed responses and invalid structured reply shapes are also
-rejected.
+is rejected. Malformed responses are also rejected.
 
 Meaning-changing rewrites can therefore reach the cursor, including changed
 names or numbers, lost uncertainty, or changed authorization. Real-model
@@ -178,8 +176,6 @@ All of these live under `[stenographer.refine]`.
 | `enabled` | `true` | Whether the stage runs at all. |
 | `host` | `"http://127.0.0.1:11434"` | Your Ollama server. Anything but loopback sends transcripts over the network. |
 | `model` | `"gemma4:e2b"` | The Ollama model tag to use. |
-| `min_words` | `10` | Shorter utterances are delivered without a refine. |
-| `structured_output` | `false` | Constrain the reply to a JSON object with one text field. |
 | `vocabulary` | `[]` | Terms the model is instructed to spell as written. |
 
 ### `model`
@@ -193,42 +189,20 @@ the only model measured that never did. It holds about 1.7 GB of VRAM (the
 speech model runs on the CPU) and takes roughly 2 seconds for a short
 utterance and 5 seconds for a long one once warm.
 
-The documented second choice is `qwen3.5:4b`, which produces the best long-form
-output of the field but needs the schema:
-
-```toml
-[stenographer.refine]
-model = "qwen3.5:4b"
-structured_output = true
-```
-
 Any model your Ollama has will be used if you name it, but quality is verified
-only for those two. Models are not interchangeable here in the way they usually
+only for the default. Models are not interchangeable here in the way they usually
 are: the benchmark rejected candidates for injecting punctuation into digit
 strings (`rtx 3080` becoming `RTX 3:080`), for rewriting digits as words, and
 for turning `nine thirty` into `ninety-three`. If you pick your own, read its
 output before you trust it.
 
-### `min_words`
+### Short utterances
 
 A four-word utterance has nothing to clean up, and a model round-trip on it is
-pure latency. Anything below the threshold goes straight from the local
+pure latency. An utterance of fewer than 10 words goes straight from the local
 formatter to your cursor, exactly as it does with refine off.
 
-### `structured_output`
-
-Some models answer with their reasoning unless a grammar stops them. Turning
-this on makes Ollama constrain the reply to `{"text": "..."}`.
-
-The default model does not need it and is left in plain-text mode. The second
-choice, `qwen3.5:4b`, does: without the schema it loses its paragraph breaks
-and keeps retraction markers. And at least one model is actively broken by it —
-`gemma3:4b` closes the JSON string with a curly quote, the reply fails to
-parse, and it then loops until it exhausts the token budget. If you configure
-your own model, try it both ways.
-
-Thinking is always disabled, whatever model you choose and whether or not the
-schema is on. It is sent as `think: false` on every request, including to
+Thinking is always disabled, whatever model you choose. It is sent as `think: false` on every request, including to
 models that cannot think, which ignore it. Turning it on made a 2-second
 utterance take 8.5 seconds in the benchmark, and made one model spend its
 entire token budget deliberating and then return nothing at all.
@@ -315,8 +289,7 @@ or not, and it is recorded as its own outcome rather than a failure — see
   `10 s + 0.06 s × input words`. That budget prices a reply from a model that
   is already loaded; see [Residency](#residency) for what happens when it is
   not.
-- The reply is not a usable chat response, or the structured reply has no text
-  field.
+- The reply is not a usable chat response.
 - The output guard refuses the reply. Both profiles refuse empty output
   and replies still wrapped in quotes or a code fence after one wrapping pair
   is stripped.

@@ -57,10 +57,6 @@ def test_service_prose_is_the_shipped_systemd_wording():
     assert g.service_log_command == "journalctl --user -u stenographer -f"
 
 
-def test_hotkey_device_comment_matches_the_default_config_template():
-    assert guidance().hotkey_device_comment == 'explicit /dev/input/event* path; "" = auto-detect'
-
-
 def test_run_with_config_quotes_the_path_for_a_posix_shell():
     """A config path with a space must survive as one argument.
 
