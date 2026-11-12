@@ -7,6 +7,7 @@ import argparse
 import dataclasses
 import json
 import logging
+import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -202,9 +203,22 @@ def test_a_missing_file_gets_the_cannot_read_error_before_the_model_cache_is_con
     assert consulted == []
 
 
+def _ffmpeg_that_cannot_read_the_file(monkeypatch, tmp_path):
+    """Put only ffmpeg and ffprobe on PATH that exit as the real ones do for damaged input."""
+    binary_dir = tmp_path / "bin"
+    binary_dir.mkdir()
+    # Real ffmpeg 8 exits with 183 and ffprobe with 1 on "Invalid data found when processing input".
+    for name, status in (("ffmpeg", 183), ("ffprobe", 1)):
+        executable = binary_dir / name
+        executable.write_text(f"#!{sys.executable}\nimport sys\nsys.exit({status})\n")
+        executable.chmod(0o755)
+    monkeypatch.setenv("PATH", str(binary_dir))
+
+
 def test_an_unreadable_file_is_reported_before_an_uncached_model(monkeypatch, tmp_path, capsys):
     # The real Bark probe over an empty data dir: no model installed.
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    _ffmpeg_that_cannot_read_the_file(monkeypatch, tmp_path)
 
     path = tmp_path / "clip.wav"
     path.write_bytes(b"RIFF not really a wave file at all")
@@ -243,6 +257,7 @@ def test_an_uncached_model_is_refused_with_the_download_instruction(
 def test_audio_that_cannot_be_decoded_is_refused_with_its_path(monkeypatch, tmp_path, capsys):
     from stenographer.lib.transcribe import bark_download
 
+    _ffmpeg_that_cannot_read_the_file(monkeypatch, tmp_path)
     path = tmp_path / "clip.wav"
     path.write_bytes(b"RIFF not really a wave file at all")
     monkeypatch.setattr(bark_download, "is_model_cached", lambda: True)
@@ -252,7 +267,24 @@ def test_audio_that_cannot_be_decoded_is_refused_with_its_path(monkeypatch, tmp_
     assert cmd_transcribe.__wrapped__(args, Config.defaults()) == 2
 
     captured = capsys.readouterr()
-    assert captured.err.startswith(f"stenographer: cannot read {path}: ")
+    assert captured.err == f"stenographer: cannot read {path}: ffmpeg exited with status 183\n"
+    assert captured.out == ""
+
+
+def test_a_damaged_wav_needs_ffmpeg_when_ffmpeg_is_missing(monkeypatch, tmp_path, capsys):
+    from stenographer.lib.transcribe import bark_download
+
+    monkeypatch.setenv("PATH", "")
+    path = tmp_path / "clip.wav"
+    path.write_bytes(b"RIFF not really a wave file at all")
+    monkeypatch.setattr(bark_download, "is_model_cached", lambda: True)
+
+    args = argparse.Namespace(file=str(path), raw=False, refine=False)
+
+    assert cmd_transcribe.__wrapped__(args, Config.defaults()) == 69
+
+    captured = capsys.readouterr()
+    assert captured.err.startswith(f"stenographer: cannot read {path}: needs ffmpeg")
     assert captured.out == ""
 
 
@@ -443,3 +475,62 @@ def test_transcribe_refine_sends_the_configured_vocabulary(ollama_wire, monkeypa
     wire = json.dumps(ollama_wire[0]["messages"])
     assert "Kubernetes" in wire
     assert "PipeWire" in wire
+
+
+def _m4a(tmp_path):
+    """Bytes that libsndfile cannot read, named like the format ffmpeg decodes."""
+    path = tmp_path / "clip.m4a"
+    path.write_bytes(b"not a libsndfile format")
+    return path
+
+
+def test_a_file_libsndfile_cannot_read_is_decoded_through_ffmpeg(monkeypatch, tmp_path, capsys):
+    from stenographer.lib.platform.linux.ffmpeg_decoder import SubprocessFfmpegDecoder
+
+    heard: list[int] = []
+
+    def decode(self, path, *, block_frames=65536):
+        yield np.full(SAMPLE_RATE // 2, 0.1, dtype=np.float32)
+        yield np.full(SAMPLE_RATE // 2, 0.1, dtype=np.float32)
+
+    monkeypatch.setattr(SubprocessFfmpegDecoder, "available", lambda self: True)
+    monkeypatch.setattr(SubprocessFfmpegDecoder, "duration", lambda self, path: 1.0)
+    monkeypatch.setattr(SubprocessFfmpegDecoder, "decode", decode)
+    from stenographer.lib.transcribe import bark_download, model
+
+    class ModelDouble:
+        def __init__(self, cfg):
+            pass
+
+        def transcribe(self, samples):
+            heard.append(samples.size)
+            return TranscriptionResult(text="hello there", duration_seconds=1.0)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(bark_download, "is_model_cached", lambda: True)
+    monkeypatch.setattr(model, "Model", ModelDouble)
+    args = argparse.Namespace(file=str(_m4a(tmp_path)), raw=False, refine=False)
+
+    assert cmd_transcribe.__wrapped__(args, Config.defaults()) == 0
+
+    assert heard == [SAMPLE_RATE]
+    assert capsys.readouterr().out == "Hello there \n"
+
+
+def test_a_file_that_needs_ffmpeg_ends_with_a_clear_message_when_it_is_missing(
+    monkeypatch, tmp_path, capsys
+):
+    from stenographer.lib.platform.linux.ffmpeg_decoder import SubprocessFfmpegDecoder
+    from stenographer.lib.transcribe import bark_download
+
+    monkeypatch.setattr(SubprocessFfmpegDecoder, "available", lambda self: False)
+    monkeypatch.setattr(bark_download, "is_model_cached", lambda: True)
+    path = _m4a(tmp_path)
+    args = argparse.Namespace(file=str(path), raw=False, refine=False)
+
+    assert cmd_transcribe.__wrapped__(args, Config.defaults()) == 69
+
+    err = capsys.readouterr().err
+    assert err.startswith(f"stenographer: cannot read {path}: needs ffmpeg")
