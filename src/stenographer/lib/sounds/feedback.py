@@ -15,7 +15,7 @@ from stenographer.lib.sounds.sound_pack import SoundPack
 
 
 class Feedback:
-    """Own mute, volume, and one-time sound-pack resolution policy."""
+    """Own the volume and one-time sound-pack resolution policy."""
 
     def __init__(
         self,
@@ -37,7 +37,7 @@ class Feedback:
         return self._pack
 
     def play(self, name: str) -> None:
-        if self._player is None or self._cfg.mute or not self._cfg.volume > 0.0:
+        if self._player is None or not self._cfg.volume > 0.0:
             return
         path = self._pack.path_for(name)
         if path is None:

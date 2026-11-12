@@ -138,7 +138,7 @@ def _make_app(kind: str, tmp_path: Path) -> HubApp:
         model_status=lambda: (ModelEntry("alpha", "speech model", "alpha", False, "1 MB"),),
         setup_test=lambda _step, _config: "alpha test",
     )
-    app.settings_screen.list_devices = lambda _key: [("0", "0: alpha input")]
+    app.settings_screen.list_devices = lambda: [("0", "0: alpha input")]
     return app
 
 
@@ -197,7 +197,7 @@ async def _settings(pilot, tab: str, *steps: str) -> None:
         elif step.startswith("click:"):
             assert await pilot.click(step.removeprefix("click:"))
         elif step == "edit-config":
-            app.config_editor.edit("asr.cpu_threads", "5")
+            app.config_editor.edit("asr.idle_unload_seconds", "5")
         else:
             await pilot.press(step)
         await pilot.pause()
@@ -213,14 +213,11 @@ STATES = {
     "record-saved": ("record", lambda p: _record(p, "record", "save"), RecordScreen),
     "library": ("library", lambda p: _library_state(p), LibraryScreen),
     "library-search-input": ("library", lambda p: _library_state(p, "slash"), LibraryScreen),
-    "settings-general": ("settings", lambda p: _settings(p, "general"), SettingsScreen),
-    "settings-audio": ("settings", lambda p: _settings(p, "audio"), SettingsScreen),
-    "settings-recognition": ("settings", lambda p: _settings(p, "recognition"), SettingsScreen),
-    "settings-live": ("settings", lambda p: _settings(p, "live"), SettingsScreen),
+    "settings-page": ("settings", lambda p: _settings(p, "settings"), SettingsScreen),
     "settings-checks": ("settings", lambda p: _settings(p, "checks"), SettingsScreen),
     "settings-number-input": (
         "settings",
-        lambda p: _settings(p, "recognition", "row:Idle unload", "enter"),
+        lambda p: _settings(p, "settings", "row:Idle unload", "enter"),
         SettingsScreen,
     ),
 }
@@ -235,22 +232,22 @@ DIALOGS = {
     "library-delete": ("library", lambda p: _library_state(p, "delete"), QuitConfirm),
     "settings-choice": (
         "settings",
-        lambda p: _settings(p, "general", "row:Hotkey mode", "enter"),
+        lambda p: _settings(p, "settings", "row:Hotkey mode", "enter"),
         ChoiceDialog,
     ),
     "settings-vocabulary": (
         "settings",
-        lambda p: _settings(p, "recognition", "row:Vocabulary", "enter"),
+        lambda p: _settings(p, "settings", "row:Vocabulary", "enter"),
         VocabularyDialog,
     ),
     "settings-guard": (
         "settings",
-        lambda p: _settings(p, "recognition", "edit-config", "1"),
+        lambda p: _settings(p, "settings", "edit-config", "1"),
         ConfigPrompt,
     ),
     "settings-discard": (
         "settings",
-        lambda p: _settings(p, "recognition", "edit-config", "click:#config-discard"),
+        lambda p: _settings(p, "settings", "edit-config", "click:#config-discard"),
         QuitConfirm,
     ),
     "checks-quick-setup": (
@@ -488,7 +485,7 @@ async def test_nav_rows_and_settings_tabs_answer_a_click(tmp_path):
             assert app.current_mode == screen
         await pilot.press("3")
         await pilot.pause()
-        for tab in ("audio", "recognition", "live", "checks", "general"):
+        for tab in ("checks", "settings"):
             assert await pilot.click(f"#tab-{tab}")
             await pilot.pause()
             assert app.settings_screen.tab == tab

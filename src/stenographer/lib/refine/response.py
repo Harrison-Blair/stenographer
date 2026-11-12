@@ -18,7 +18,6 @@ from collections import Counter
 
 from stenographer.lib.refine.errors import RefineRejectedError, RefineResponseError
 from stenographer.lib.refine.profiles import RefineProfile
-from stenographer.lib.refine.prompt import RESPONSE_KEY
 
 #: Accepted length of the output relative to the input. Cleanup removes fillers
 #: and adds punctuation, so it stays close to the original; a reply far outside
@@ -102,23 +101,6 @@ def message_content(payload: str | bytes) -> str:
     if not isinstance(content, str):
         raise RefineResponseError("reply carried no content")
     return content
-
-
-def unwrap_structured(content: str, *, structured_output: bool) -> str:
-    """Take the schema's field out of a structured reply, or pass text through."""
-
-    if not structured_output:
-        return content
-    try:
-        data = json.loads(content)
-    except ValueError as exc:
-        raise RefineResponseError("structured reply was not JSON") from exc
-    if not isinstance(data, dict):
-        raise RefineResponseError("structured reply was not an object")
-    value = data.get(RESPONSE_KEY)
-    if not isinstance(value, str):
-        raise RefineResponseError("structured reply had no text field")
-    return value
 
 
 def _wraps(value: str, opening: str, closing: str) -> bool:
@@ -255,15 +237,11 @@ def refined_text(
     payload: str | bytes,
     original: str,
     *,
-    structured_output: bool,
     profile: RefineProfile = RefineProfile.GENERAL,
 ) -> str:
     """Parse a reply and apply the selected profile's output checks."""
 
-    content = unwrap_structured(
-        message_content(payload),
-        structured_output=structured_output,
-    )
+    content = message_content(payload)
     if profile is RefineProfile.AGENT:
         return basic_format(original, content)
     return guard(original, content)

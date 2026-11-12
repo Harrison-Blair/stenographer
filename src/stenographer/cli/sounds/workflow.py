@@ -44,10 +44,10 @@ def _preview(console: Console, config: Config, pack: object) -> bool:
     if player is None:
         console.error("no supported cue player is available")
         return False
-    if config.feedback.mute or config.feedback.volume <= 0.0:
+    if config.feedback.volume <= 0.0:
         console.write(
-            f"Cues are muted or at volume zero: this preview plays at volume "
-            f"{PREVIEW_VOLUME_WHEN_MUTED} and changes neither setting."
+            f"Cues are at volume zero: this preview plays at volume "
+            f"{PREVIEW_VOLUME_WHEN_MUTED} and does not change the setting."
         )
     try:
         playback.preview_sound_pack(pack, player, playback.preview_volume(config.feedback))
@@ -234,9 +234,6 @@ def run(
     if isinstance(loaded, int):
         return loaded
     document = loaded
-    from stenographer.lib.logging.pipeline import apply_stderr_level
-
-    apply_stderr_level(document.config.feedback.log_level)
 
     config_dir = document.path.parent
     try:

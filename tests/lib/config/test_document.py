@@ -26,8 +26,8 @@ answer = 42 # unrelated inline comment
 
 [stenographer.asr]
 # thread choice comment
-cpu_threads = 3 # keep this inline comment
-idle_unload_seconds = 0x384 # preserve equivalent hand formatting
+cpu_threads = 3 # a removed key stays
+idle_unload_seconds = 0x384 # keep this inline comment
 mystery = "preserve me"
 
 [stenographer.hotkey] # deliberately after ASR
@@ -43,15 +43,15 @@ def _load_document(tmp_path, content):
 
 def test_render_preserves_comments_order_and_unknown_content(tmp_path):
     source = _load_document(tmp_path, PRESERVATION_FIXTURE)
-    reviewed = replace(source.config, asr=replace(source.config.asr, cpu_threads=5))
+    reviewed = replace(source.config, asr=replace(source.config.asr, idle_unload_seconds=5))
 
     rendered = source.render(reviewed)
 
     assert "# hand-written preface" in rendered
     assert "answer = 42 # unrelated inline comment" in rendered
     assert "# thread choice comment" in rendered
-    assert "cpu_threads = 5 # keep this inline comment" in rendered
-    assert "idle_unload_seconds = 0x384 # preserve equivalent hand formatting" in rendered
+    assert "idle_unload_seconds = 5 # keep this inline comment" in rendered
+    assert "cpu_threads = 3 # a removed key stays" in rendered
     assert 'mystery = "preserve me"' in rendered
     assert rendered.index("[stenographer.asr]") < rendered.index("[stenographer.hotkey]")
     assert Config.loads(rendered) == reviewed
@@ -59,7 +59,7 @@ def test_render_preserves_comments_order_and_unknown_content(tmp_path):
 
 def test_save_keeps_the_retired_update_check_key(tmp_path):
     document = _load_document(tmp_path, "[stenographer.feedback]\nupdate_check = false\n")
-    reviewed = replace(document.config, asr=replace(document.config.asr, cpu_threads=5))
+    reviewed = replace(document.config, asr=replace(document.config.asr, idle_unload_seconds=5))
 
     result = document.save(reviewed)
 
@@ -72,32 +72,17 @@ def test_render_materializes_every_known_key(tmp_path):
     rendered = _load_document(tmp_path, "").render(Config.defaults())
     root = tomlkit.parse(rendered)["stenographer"]
 
-    assert list(root["hotkey"]) == [
-        "binding",
-        "device",
-        "cancel_binding",
-        "mode",
-        "hybrid_threshold_seconds",
-        "general_binding",
-    ]
-    assert list(root["audio"]) == ["input_device", "max_recording_seconds"]
-    assert list(root["asr"]) == ["idle_unload_seconds", "cpu_threads"]
-    assert list(root["feedback"]) == [
-        "volume",
-        "mute",
-        "overlay",
-        "spectrum_floor_dbfs",
-        "sound_pack",
-        "log_level",
-    ]
-    assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 16
+    assert list(root["hotkey"]) == ["binding", "cancel_binding", "mode", "general_binding"]
+    assert list(root["audio"]) == ["input_device"]
+    assert list(root["asr"]) == ["idle_unload_seconds"]
+    assert list(root["feedback"]) == ["volume", "overlay", "spectrum_floor_dbfs", "sound_pack"]
+    assert sum(len(root[name]) for name in ("hotkey", "audio", "asr", "feedback")) == 10
 
 
 def test_render_encodes_optional_strings_as_empty_strings(tmp_path):
     rendered = _load_document(tmp_path, "").render(Config.defaults())
     root = tomlkit.parse(rendered)["stenographer"]
 
-    assert root["hotkey"]["device"] == ""
     assert root["hotkey"]["cancel_binding"] == "KEY_ESC"
     assert root["audio"]["input_device"] == ""
 
@@ -109,24 +94,17 @@ def test_render_round_trips_nondefault_production_config(tmp_path):
         hotkey=replace(
             defaults.hotkey,
             binding="KEY_F9",
-            device="/dev/input/event7",
             cancel_binding=None,
             mode="toggle",
         ),
         audio=replace(
             defaults.audio,
             input_device="USB microphone",
-            max_recording_seconds=45,
         ),
-        asr=replace(
-            defaults.asr,
-            idle_unload_seconds=0,
-            cpu_threads=4,
-        ),
+        asr=replace(defaults.asr, idle_unload_seconds=0),
         feedback=replace(
             defaults.feedback,
             volume=0.25,
-            mute=True,
             overlay=False,
             spectrum_floor_dbfs=-72.0,
             sound_pack="warm-desk",
@@ -159,7 +137,7 @@ def test_defaults_document_renders_the_annotated_template_verbatim(tmp_path):
     """Seen to FAIL against a writer built on ``ConfigDocument.load`` (the
     hand-written comment survived and none of the annotations appeared)."""
     path = tmp_path / "config.toml"
-    path.write_text("[stenographer.asr]\ncpu_threads = 3 # mine\n", encoding="utf-8")
+    path.write_text("[stenographer.asr]\nidle_unload_seconds = 3 # mine\n", encoding="utf-8")
 
     rendered = ConfigDocument.defaults(path).render(Config.defaults())
 
@@ -197,7 +175,7 @@ def test_save_writes_the_reviewed_config_and_keeps_the_previous_bytes(tmp_path):
     original = b"# exact original\n[stenographer.feedback]\nvolume = 0.25 # comment\n"
     path.write_bytes(original)
     document = ConfigDocument.load(path)
-    reviewed = replace(document.config, feedback=replace(document.config.feedback, mute=True))
+    reviewed = replace(document.config, feedback=replace(document.config.feedback, overlay=False))
 
     result = document.save(reviewed)
 
@@ -216,7 +194,7 @@ def test_the_retired_min_speech_rms_key_loads_without_effect_and_survives_a_save
     old_audio = (
         "[stenographer.audio]\n"
         "min_speech_rms = 0.002        # pre-decode energy gate; 0 disables the gate\n"
-        "max_recording_seconds = 600\n"
+        'input_device = ""\n'
     )
     path = tmp_path / "config.toml"
     path.write_bytes(old_audio.encode("utf-8"))
@@ -228,7 +206,7 @@ def test_the_retired_min_speech_rms_key_loads_without_effect_and_survives_a_save
     assert [r for r in caplog.records if r.levelname not in ("DEBUG", "INFO")] == []
     assert len(recwarn) == 0
 
-    reviewed = replace(document.config, asr=replace(document.config.asr, cpu_threads=4))
+    reviewed = replace(document.config, asr=replace(document.config.asr, idle_unload_seconds=4))
     document.save(reviewed)
 
     saved = path.read_text(encoding="utf-8")
@@ -251,11 +229,11 @@ def test_save_keeps_removed_whisper_keys_byte_for_byte(tmp_path):
     path = tmp_path / "config.toml"
     path.write_bytes(old_asr.encode("utf-8"))
     document = ConfigDocument.load(path)
-    reviewed = replace(document.config, asr=replace(document.config.asr, cpu_threads=4))
+    reviewed = replace(document.config, asr=replace(document.config.asr, idle_unload_seconds=4))
 
     document.save(reviewed)
 
-    expected = old_asr.replace("cpu_threads = 0  ", "cpu_threads = 4  ")
+    expected = old_asr.replace("idle_unload_seconds = 900  ", "idle_unload_seconds = 4  ")
     saved = path.read_text(encoding="utf-8")
     assert saved.startswith(expected)
     assert "[stenographer.asr]" not in saved[len(expected) :]
@@ -280,9 +258,9 @@ def test_save_of_unchanged_bytes_writes_nothing_at_all(tmp_path):
 
 def test_save_refuses_a_config_edited_since_it_was_loaded(tmp_path):
     path = tmp_path / "config.toml"
-    path.write_text("[stenographer.feedback]\nmute = false\n", encoding="utf-8")
+    path.write_text("[stenographer.feedback]\noverlay = true\n", encoding="utf-8")
     document = ConfigDocument.load(path)
-    edited = "[stenographer.feedback]\nmute = true # edited in another window\n"
+    edited = "[stenographer.feedback]\noverlay = false # edited in another window\n"
     path.write_text(edited, encoding="utf-8")
 
     with pytest.raises(ConfigChangedError):
@@ -294,21 +272,21 @@ def test_save_refuses_a_config_edited_since_it_was_loaded(tmp_path):
 
 def test_save_refuses_a_symlink_repointed_since_it_was_loaded(tmp_path):
     first = tmp_path / "first.toml"
-    first.write_text("[stenographer.feedback]\nmute = false\n", encoding="utf-8")
+    first.write_text("[stenographer.feedback]\noverlay = true\n", encoding="utf-8")
     second = tmp_path / "second.toml"
-    second.write_text("[stenographer.feedback]\nmute = false\n", encoding="utf-8")
+    second.write_text("[stenographer.feedback]\noverlay = true\n", encoding="utf-8")
     link = tmp_path / "config.toml"
     link.symlink_to(first.name)
     document = ConfigDocument.load(link)
 
     link.unlink()
     link.symlink_to(second.name)
-    reviewed = replace(document.config, feedback=replace(document.config.feedback, mute=True))
+    reviewed = replace(document.config, feedback=replace(document.config.feedback, overlay=False))
 
     with pytest.raises(ConfigChangedError):
         document.save(reviewed)
 
-    assert second.read_text(encoding="utf-8") == "[stenographer.feedback]\nmute = false\n"
+    assert second.read_text(encoding="utf-8") == "[stenographer.feedback]\noverlay = true\n"
     assert not list(tmp_path.glob("*.bak-*"))
 
 
@@ -346,15 +324,13 @@ def test_render_round_trips_delivery_settings_through_the_preservation_layer(tmp
     defaults = Config.defaults()
     reviewed = replace(
         defaults,
-        delivery=replace(
-            defaults.delivery, copy_original=False, restore_clipboard=False, restore_delay_ms=250
-        ),
+        delivery=replace(defaults.delivery, copy_original=False, restore_clipboard=False),
     )
 
     rendered = _load_document(tmp_path, PRESERVATION_FIXTURE).render(reviewed)
 
     assert "# hand-written preface" in rendered
-    assert "restore_delay_ms = 250" in rendered
+    assert "restore_clipboard = false" in rendered
     assert Config.loads(rendered) == reviewed
 
 

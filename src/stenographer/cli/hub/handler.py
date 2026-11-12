@@ -16,7 +16,6 @@ from stenographer.lib.config.errors import ConfigError
 from stenographer.lib.config.models import Config
 from stenographer.lib.config.paths import load_or_default, resolve_config_path
 from stenographer.lib.logging.pipeline import (
-    apply_stderr_level,
     flush_logging,
     fmt_event,
     log_failure,
@@ -78,8 +77,6 @@ def cmd_hub(_args: argparse.Namespace) -> int:
     except ConfigError:
         cfg = Config.defaults()
     config_editor = ConfigEditor(path)
-    if not config_editor.read_only:
-        apply_stderr_level(cfg.feedback.log_level)
     platform = current_platform()
     services = HubServices(cfg, platform)
     if not config_editor.read_only:

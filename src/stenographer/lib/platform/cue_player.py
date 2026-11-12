@@ -8,7 +8,7 @@ if TYPE_CHECKING:
 
 
 class CuePlayer(Protocol):
-    """Plays cue files; ``Feedback`` owns mute/volume/asset policy."""
+    """Plays cue files; ``Feedback`` owns volume/asset policy."""
 
     def play(self, path: Path, volume: float) -> None: ...
 

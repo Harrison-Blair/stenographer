@@ -45,12 +45,11 @@ On the test machine the whole command took about 2 minutes. The installed
 model uses about 653 MiB. A model that is already installed is not built
 again. `stenographer doctor` warns when `python3 -m venv` would fail.
 
-The ASR settings are `idle_unload_seconds` and `cpu_threads` in
-`[stenographer.asr]`. Speech-model settings from earlier releases may stay in
+The ASR setting is `idle_unload_seconds` in `[stenographer.asr]`; the speech
+worker uses the physical CPU cores, at most 8. Speech-model settings from earlier releases may stay in
 your config file. Stenographer ignores them and saves keep them unchanged; you
 can delete them by hand. The speech model keeps fillers such as "um" in every
-mode; [refine](refine.md) removes them from dictations of 10 or more words (the
-default `min_words`). Earlier releases had an energy gate,
+mode; [refine](refine.md) removes them from dictations of 10 or more words. Earlier releases had an energy gate,
 `audio.min_speech_rms`. It is ignored now, and saves keep the line. The voice
 detector decides whether a dictation holds speech: with speech, the whole
 recording is transcribed; without speech, nothing is. For live capture,
@@ -122,7 +121,7 @@ Set `cancel_binding = ""` to disable this behavior, or choose another evdev
 By default, when clipboard capture and restoration are available, the daemon
 puts your previous clipboard item back after each paste. It saves
 the clipboard before it copies the transcript, pastes, plays the delivered
-sound, waits `restore_delay_ms`, and then writes the saved item back. If you
+sound, waits half a second, and then writes the saved item back. If you
 copied something else during the wait, your newer item stays and the saved item
 is dropped. If delivery stops before the paste, the saved item comes back
 without the wait. The primary selection keeps the transcript. The saved item is held in memory only
@@ -137,7 +136,6 @@ rewrite, and then your previous item again. General never copies the original.
 [stenographer.delivery]
 copy_original = true      # Agent only
 restore_clipboard = true
-restore_delay_ms = 500    # 0 to 60000
 ```
 
 Limits:
@@ -147,13 +145,13 @@ Limits:
   first offered type only.
 - An item that a password manager marks as secret is not saved. The
   transcript stays on the clipboard instead.
-- The daemon stays busy for `restore_delay_ms` after each paste. A hotkey press
+- The daemon stays busy for half a second after each paste. A hotkey press
   in that window is ignored. Escape no longer cancels, because the text is
   already pasted.
 - A later copy of exactly the transcript text looks like the transcript, so the
   saved item replaces it.
-- If an application reads the paste late and gets your previous item, increase
-  `restore_delay_ms`.
+- An application that reads the paste more than half a second late gets your
+  previous item.
 - Saving waits at most one second and keeps at most 64 MiB. A slower or larger
   item is not restored.
 - Restoring needs `wl-paste` from `wl-clipboard` (or `xclip` under XWayland).
@@ -169,8 +167,8 @@ stenographer sounds --list
 stenographer sounds --preview warm-desk
 ```
 
-When cues are muted or volume is zero, a preview says so and plays at volume 0.6
-without changing either setting.
+When the volume is zero, a preview says so and plays at volume 0.6
+without changing the setting.
 
 Select a pack for the daemon:
 
@@ -227,8 +225,8 @@ records. Disable collection with:
 enabled = false
 ```
 
-Set `resource_profiling = false` if you want ordinary numeric statistics without
-host resource sampling. Collection is asynchronous, so an application crash
+While collection is on, it also samples local resource use during utterances.
+Collection is asynchronous, so an application crash
 can lose measurements that have not been committed yet.
 
 ## Understand privacy and network access
@@ -249,8 +247,7 @@ sends transcripts to it over the network.
 
 It cleans filler words and self-corrections out of each transcript through a
 local Ollama model. The default is `gemma4:e2b`, about a 7.2 GB download;
-`qwen3.5:4b` is the documented alternative and needs
-`structured_output = true`. Model reasoning is always disabled. See
+Model reasoning is always disabled. See
 [docs/refine.md](refine.md) for the whole feature.
 
 ## Open the terminal hub
@@ -288,7 +285,7 @@ Common fixes:
 - If delivery fails under Wayland, install `wl-copy` from `wl-clipboard`.
   `xclip` with XWayland is supported where Wayland data control is unavailable.
 - If your previous clipboard item does not come back, install `wl-paste` from
-  `wl-clipboard`, or increase `restore_delay_ms`; see
+  `wl-clipboard`; see
   [Keep your clipboard](#keep-your-clipboard).
 - If a setting change has no effect, restart the user service.
 - Sound cues and desktop error notifications are optional; missing players do
@@ -306,7 +303,7 @@ stenographer devices
 
 It lists the PipeWire sources that can record, one per line: the source name,
 then its description; `*` marks the default source. Monitors of outputs are not
-listed. Save a source name as `audio.input_device` (setup, or the Audio tab of
+listed. Save a source name as `audio.input_device` (setup, or the Microphone row of
 the hub Settings), or leave it empty to follow the default microphone. The
 values `pipewire`, `default`, and `pulse` also mean the default microphone. A
 number is a device index from an older version: it also means the default

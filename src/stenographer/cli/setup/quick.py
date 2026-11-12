@@ -12,7 +12,6 @@ from stenographer.cli.setup.workflow import (
     _capture_or_choose_binding,
     _edit_feedback_section,
     _edit_refine_section,
-    _hotkey_devices,
     _prompt_choice,
     _prompt_device,
     parse_quick_review_action,
@@ -31,17 +30,11 @@ def _quick_wizard(
 ) -> Config:
     config = initial
     console.write("\nHotkey")
-    device = _prompt_device(console, "Hotkey", config.hotkey.device, _hotkey_devices())
-    binding = _capture_or_choose_binding(
-        console,
-        config.hotkey.binding,
-        device,
-        new_config=new_config,
-    )
+    binding = _capture_or_choose_binding(console, config.hotkey.binding, new_config=new_config)
     mode = _prompt_choice(console, "Trigger mode", config.hotkey.mode, ("hold", "toggle", "hybrid"))
     config = dataclasses.replace(
         config,
-        hotkey=dataclasses.replace(config.hotkey, device=device, binding=binding, mode=mode),
+        hotkey=dataclasses.replace(config.hotkey, binding=binding, mode=mode),
     )
 
     console.write("\nMicrophone")
@@ -64,7 +57,6 @@ def _quick_wizard(
             "IMPORTANT: spectrum calibration controls only the 18 display bars.",
             "It does not affect capture, speech detection, ASR, or transcription.",
         ),
-        ask_log_level=False,
     )
 
     config = _edit_refine_section(console, config, ask_details=False)

@@ -99,8 +99,7 @@ def _log_banner(cfg: Config, plat: Platform, caps: Capabilities, config_path: Pa
             "config_asr",
             model=MODEL_DIRNAME,
             idle_unload_seconds=asr.idle_unload_seconds,
-            cpu_threads=asr.cpu_threads,
-            resolved_cpu_threads=resolve_cpu_threads(asr.cpu_threads, plat.physical_core_count()),
+            cpu_threads=resolve_cpu_threads(plat.physical_core_count()),
         )
     )
     log.info(
@@ -125,8 +124,6 @@ def _log_banner(cfg: Config, plat: Platform, caps: Capabilities, config_path: Pa
             enabled=int(refine.enabled),
             host=refine_host,
             model=refine.model,
-            min_words=refine.min_words,
-            structured_output=int(refine.structured_output),
             loopback=int(is_loopback(refine.host)),
         )
     )
@@ -140,6 +137,5 @@ def _log_banner(cfg: Config, plat: Platform, caps: Capabilities, config_path: Pa
             "banner",
             "config_analytics",
             enabled=int(cfg.analytics.enabled),
-            resource_profiling=int(cfg.analytics.resource_profiling),
         )
     )

@@ -14,9 +14,9 @@ class HostGuidance:
 
     Everything the CLI shows a user that is true only of one OS lives here —
     capability labels and fix hints, the words for the background service and
-    the commands that control it, the config template's hotkey-device comment,
-    and the shell syntax for running against an explicit config path. The core
-    supplies the sentence frames; the host supplies the clauses.
+    the commands that control it, and the shell syntax for running against an
+    explicit config path. The core supplies the sentence frames; the host
+    supplies the clauses.
 
     ``capability_labels`` and ``capability_fix_hints`` are keyed by the
     semantic ``HostProbe`` / ``capabilities.Capabilities`` field names, so no
@@ -40,8 +40,6 @@ class HostGuidance:
     service_start_command: str
     service_restart_command: str
     service_log_command: str
-    hotkey_device_comment: str
-    """The ``hotkey.device`` comment written into the annotated default config."""
     run_with_config: Callable[[str], str]
     """Build the shell line that runs the daemon against an explicit config path."""
     clipboard_read_fix_hints: Mapping[str, str] = field(default_factory=dict)

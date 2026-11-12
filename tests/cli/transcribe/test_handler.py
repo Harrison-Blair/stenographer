@@ -47,7 +47,7 @@ def _spoken_clip(monkeypatch, tmp_path, text: str):
     path = _wav(tmp_path)
 
     class ModelDouble:
-        def __init__(self, cfg):
+        def __init__(self):
             pass
 
         def transcribe(self, samples):
@@ -82,7 +82,7 @@ def test_file_transcription_closes_and_summarizes_success_or_failure(
             raise format_error
 
     class ModelDouble:
-        def __init__(self, cfg):
+        def __init__(self):
             self.close_calls = 0
             instances.append(self)
 
@@ -298,7 +298,7 @@ def test_a_close_failure_surfaces_when_the_run_itself_succeeded(monkeypatch, tmp
     close_error = RuntimeError("could not release the decoder")
 
     class ModelDouble:
-        def __init__(self, cfg):
+        def __init__(self):
             pass
 
         def transcribe(self, samples):
@@ -336,7 +336,7 @@ def test_a_model_that_never_loads_is_summarized_without_a_close(monkeypatch, tmp
     path = _wav(tmp_path)
     load_error = RuntimeError("CUDA library not found")
 
-    def refuse(cfg):
+    def refuse():
         raise load_error
 
     monkeypatch.setattr(bark_download, "is_model_cached", lambda: True)
@@ -499,7 +499,7 @@ def test_a_file_libsndfile_cannot_read_is_decoded_through_ffmpeg(monkeypatch, tm
     from stenographer.lib.transcribe import bark_download, model
 
     class ModelDouble:
-        def __init__(self, cfg):
+        def __init__(self):
             pass
 
         def transcribe(self, samples):

@@ -9,7 +9,6 @@ import math
 import pytest
 
 from stenographer.lib.refine.errors import RefineRejectedError, RefineResponseError
-from stenographer.lib.refine.prompt import RESPONSE_KEY
 from stenographer.lib.refine.response import (
     MAX_LENGTH_RATIO,
     MIN_LENGTH_RATIO,
@@ -17,7 +16,6 @@ from stenographer.lib.refine.response import (
     message_content,
     refined_text,
     restore_trailing_space,
-    unwrap_structured,
 )
 
 ORIGINAL = "i think we should ship it on friday because the notes are not done"
@@ -45,19 +43,6 @@ def test_content_comes_out_of_a_non_streaming_chat_reply():
 def test_a_reply_that_is_not_a_chat_response_is_refused(payload):
     with pytest.raises(RefineResponseError):
         message_content(payload)
-
-
-def test_structured_replies_yield_the_schema_field_and_plain_ones_pass_through():
-    encoded = json.dumps({RESPONSE_KEY: "cleaned"})
-
-    assert unwrap_structured(encoded, structured_output=True) == "cleaned"
-    assert unwrap_structured("cleaned", structured_output=False) == "cleaned"
-
-
-@pytest.mark.parametrize("content", ["not json", "[1, 2]", '{"other": "x"}', '{"text": 3}'])
-def test_a_structured_reply_missing_its_field_is_refused(content):
-    with pytest.raises(RefineResponseError):
-        unwrap_structured(content, structured_output=True)
 
 
 def test_a_plausible_edit_passes_the_guard_unchanged():
@@ -139,9 +124,9 @@ def test_a_second_wrapping_pair_is_a_refusal_not_another_strip():
 
 def test_refined_text_parses_and_guards_in_one_step():
     cleaned = "I think we should ship it on Friday, because the notes are not done."
-    payload = _reply(json.dumps({RESPONSE_KEY: cleaned}))
+    payload = _reply(cleaned)
 
-    assert refined_text(payload, ORIGINAL, structured_output=True) == cleaned
+    assert refined_text(payload, ORIGINAL) == cleaned
 
 
 def test_the_dictation_trailing_space_survives_the_model():
@@ -161,7 +146,7 @@ def test_a_reply_cut_off_at_the_token_cap_is_refused():
     payload = json.dumps({"done_reason": "length", "message": {"content": cut_off}}).encode()
 
     with pytest.raises(RefineRejectedError):
-        refined_text(payload, ORIGINAL, structured_output=False)
+        refined_text(payload, ORIGINAL)
 
 
 @pytest.mark.parametrize("done_reason", ["stop", None])
@@ -170,7 +155,7 @@ def test_a_reply_that_is_not_truncated_is_accepted(done_reason):
     reply = {"message": {"content": cleaned}}
     if done_reason is not None:
         reply["done_reason"] = done_reason
-    assert refined_text(json.dumps(reply).encode(), ORIGINAL, structured_output=False) == cleaned
+    assert refined_text(json.dumps(reply).encode(), ORIGINAL) == cleaned
 
 
 @pytest.mark.parametrize(

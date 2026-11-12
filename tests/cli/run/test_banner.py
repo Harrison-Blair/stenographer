@@ -94,11 +94,9 @@ def test_banner_reports_build_backends_and_every_configured_key(caplog):
     assert f"agent_binding={cfg.hotkey.binding}" in lines["config_hotkey"]
     assert f"general_binding={cfg.hotkey.general_binding}" in lines["config_hotkey"]
     assert f"mode={cfg.hotkey.mode}" in lines["config_hotkey"]
-    assert f"max_recording_seconds={cfg.audio.max_recording_seconds}" in lines["config_audio"]
     assert "model=bark-pro-int8" in lines["config_asr"]
     assert f"idle_unload_seconds={cfg.asr.idle_unload_seconds}" in lines["config_asr"]
     assert f"sound_pack={cfg.feedback.sound_pack}" in lines["config_feedback"]
-    assert f"log_level={cfg.feedback.log_level}" in lines["config_feedback"]
     assert f"enabled={int(cfg.analytics.enabled)}" in lines["config_analytics"]
 
 
@@ -106,7 +104,7 @@ def test_banner_reports_unset_optionals_rather_than_dropping_their_keys(caplog):
     defaults = Config.defaults()
     cfg = dataclasses.replace(
         defaults,
-        hotkey=dataclasses.replace(defaults.hotkey, cancel_binding=None, device=None),
+        hotkey=dataclasses.replace(defaults.hotkey, cancel_binding=None),
         audio=dataclasses.replace(defaults.audio, input_device=None),
         feedback=dataclasses.replace(defaults.feedback, spectrum_floor_dbfs=None),
     )
@@ -115,7 +113,6 @@ def test_banner_reports_unset_optionals_rather_than_dropping_their_keys(caplog):
     lines = _banner(caplog, cfg, caps)
 
     assert "cancel_binding=<unset>" in lines["config_hotkey"]
-    assert "device=<unset>" in lines["config_hotkey"]
     assert "input_device=<unset>" in lines["config_audio"]
     assert "spectrum_floor_dbfs=<unset>" in lines["config_feedback"]
     assert "cue_player=<unset>" in lines["backends"]
@@ -135,24 +132,22 @@ def test_banner_reports_a_calibrated_profile_as_its_own_values(caplog):
     assert "spectrum_floor_dbfs=-61,-60.5" in lines["config_feedback"]
 
 
-def test_banner_asr_line_reports_exactly_the_model_and_the_two_asr_keys(caplog):
+def test_banner_asr_line_reports_exactly_the_model_the_asr_key_and_the_threads(caplog):
     lines = _banner(caplog, Config.defaults(), _capabilities(), _platform(6))
 
     fields = [part.partition("=")[0] for part in lines["config_asr"].split()[2:]]
-    assert fields == ["model", "idle_unload_seconds", "cpu_threads", "resolved_cpu_threads"]
+    assert fields == ["model", "idle_unload_seconds", "cpu_threads"]
 
 
 def test_banner_reports_the_resolved_thread_count_from_the_host_core_count(caplog):
-    defaults = Config.defaults()
-    cfg = dataclasses.replace(defaults, asr=dataclasses.replace(defaults.asr, cpu_threads=0))
+    cfg = Config.defaults()
 
     counted = _banner(caplog, cfg, _capabilities(), _platform(6))
     caplog.clear()
     uncounted = _banner(caplog, cfg, _capabilities(), _platform(None))
 
-    assert "cpu_threads=0" in counted["config_asr"]
-    assert "resolved_cpu_threads=6" in counted["config_asr"]
-    assert "resolved_cpu_threads=4" in uncounted["config_asr"]
+    assert "cpu_threads=6" in counted["config_asr"]
+    assert "cpu_threads=4" in uncounted["config_asr"]
 
 
 def test_banner_reports_the_refine_stage_and_marks_a_loopback_host_as_local(caplog):
@@ -163,7 +158,6 @@ def test_banner_reports_the_refine_stage_and_marks_a_loopback_host_as_local(capl
     line = lines["config_refine"]
     assert f"enabled={int(cfg.refine.enabled)}" in line
     assert f"model={cfg.refine.model}" in line
-    assert f"min_words={cfg.refine.min_words}" in line
     assert "host=127.0.0.1:11434" in line
     assert "loopback=1" in line
     assert "remote_host" not in "\n".join(lines)

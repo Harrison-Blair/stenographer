@@ -71,6 +71,12 @@ _STOP_BUDGET_SECONDS = 30.0
 #: warm-up busy for minutes, and burning anywhere near that long here would
 #: make Ctrl-C look hung for a benefit this small.
 _REFINE_WARMUP_JOIN_SECONDS = 1.0
+#: A toggle or latched-hybrid recording ends on its own after this long.
+MAX_RECORDING_SECONDS = 600
+#: In hybrid mode, a press held this long stops the recording on release.
+HYBRID_THRESHOLD_SECONDS = 0.5
+#: The wait after a paste before the previous clipboard item is put back.
+RESTORE_DELAY_SECONDS = 0.5
 
 
 class Daemon:
@@ -170,7 +176,7 @@ class Daemon:
         recorder = Recorder(
             capture_factory=plat.mic_capture,
             device=cfg.audio.input_device,
-            max_seconds=cfg.audio.max_recording_seconds,
+            max_seconds=MAX_RECORDING_SECONDS,
             on_block=status.audio_block,
         )
         daemon = cls(
@@ -204,7 +210,7 @@ class Daemon:
                 daemon.on_key_up()
 
         listener = plat.hotkey_listener(
-            device=cfg.hotkey.device,
+            device=None,
             lock=threading.RLock(),
             bindings={
                 RefineProfile.AGENT.value: parse_binding(cfg.hotkey.binding, keys),
@@ -235,7 +241,7 @@ class Daemon:
             copy=plat.clipboard_writer(clipboard_backend),
             read=read,
             restore=restore,
-            restore_delay=cfg.delivery.restore_delay_ms / 1000.0,
+            restore_delay=RESTORE_DELAY_SECONDS,
         )
         daemon._platform = plat
         daemon._listener = listener
@@ -498,7 +504,7 @@ class Daemon:
             held = time.perf_counter() - record.started_at
             action = hybrid_release_action(
                 held_seconds=held,
-                threshold=self._cfg.hotkey.hybrid_threshold_seconds,
+                threshold=HYBRID_THRESHOLD_SECONDS,
             )
             log.debug(
                 fmt_event("hotkey", "hybrid_release", action=action, held_ms=round(held * 1000))
@@ -518,7 +524,7 @@ class Daemon:
                 return
             log.info(
                 "recorder: max_duration_stop seconds=%d",
-                self._cfg.audio.max_recording_seconds,
+                MAX_RECORDING_SECONDS,
             )
         self.on_key_up(generation=generation)
 
@@ -539,13 +545,13 @@ class Daemon:
         """Arm the cap timer for what is left of this utterance's window.
 
         The window runs from the press in every mode, so a hybrid tap that
-        latched gets ``max_recording_seconds`` minus the time it was already
+        latched gets ``MAX_RECORDING_SECONDS`` minus the time it was already
         held: this timer and the recorder's own sample cap then end the
         recording at the same instant. Called with the state lock held; the
         press instant is passed in rather than read off ``self._record``, which
         is optional only in the type, never at these call sites.
         """
-        remaining = self._cfg.audio.max_recording_seconds - (time.perf_counter() - started_at)
+        remaining = MAX_RECORDING_SECONDS - (time.perf_counter() - started_at)
         timer = threading.Timer(
             max(0.0, remaining), self._on_max_duration, args=(self._utterance_id,)
         )

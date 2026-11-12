@@ -15,10 +15,8 @@ def test_real_asr_spawn_is_primed_before_textual_captures_stderr():
 import asyncio
 import sys
 from textual.app import App
-from stenographer.lib.config.models import Config
 from stenographer.lib.platform.multiprocessing_asr_transport import MultiprocessingAsrTransport
 
-config = Config.defaults()
 transport = MultiprocessingAsrTransport()
 
 async def run_app():
@@ -28,13 +26,13 @@ async def run_app():
         sys.stderr = app._capture_stderr
         try:
             assert sys.stderr.fileno() == -1
-            process = transport.spawn(config.asr, on_log=lambda _record: None)
+            process = transport.spawn(on_log=lambda _record: None)
             process.close()
         finally:
             sys.stderr = previous_stderr
 
 # Spawn and stop a real child before Textual captures stderr.
-process = transport.spawn(config.asr, on_log=lambda _record: None)
+process = transport.spawn(on_log=lambda _record: None)
 process.close()
 asyncio.run(run_app())
 """

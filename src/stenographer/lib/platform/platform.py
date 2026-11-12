@@ -65,10 +65,6 @@ class Platform(Protocol):
         on_cancel: Callable[[], None] | None = None,
     ) -> HotkeyListener: ...
 
-    def hotkey_devices(self) -> list[tuple[str, str]]:
-        """Selectable hotkey devices for setup as ``(value, label)`` pairs."""
-        ...
-
     def capture_binding(self, stdin: TextIO, device: str | None, *, timeout: float) -> str: ...
 
     # --- output ---

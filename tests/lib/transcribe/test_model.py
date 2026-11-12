@@ -3,12 +3,9 @@
 
 from __future__ import annotations
 
-import dataclasses
-
 import numpy as np
 import pytest
 
-from stenographer.lib.config.models import Config
 from stenographer.lib.transcribe.decode import (
     _assemble,
     _validate_output,
@@ -23,18 +20,11 @@ from stenographer.lib.transcribe.results import SegmentInfo, WordInfo
 
 
 @pytest.mark.parametrize(
-    ("configured", "cores", "expected"),
-    [
-        (3, 16, 3),
-        (0, 4, 4),
-        (0, 16, 8),
-        (0, None, 4),
-        (0, 0, 4),
-        (0, -1, 4),
-    ],
+    ("cores", "expected"),
+    [(4, 4), (16, 8), (None, 4), (0, 4), (-1, 4)],
 )
-def test_resolve_cpu_threads(configured, cores, expected):
-    assert resolve_cpu_threads(configured, cores) == expected
+def test_resolve_cpu_threads(cores, expected):
+    assert resolve_cpu_threads(cores) == expected
 
 
 def _valid_kwargs():
@@ -207,9 +197,8 @@ class _Recognizer:
 
 
 def _model(result):
-    cfg = dataclasses.replace(Config.defaults().asr, cpu_threads=2)
     recognizer = _Recognizer(result)
-    return Model(cfg, recognizer=recognizer), recognizer
+    return Model(recognizer=recognizer), recognizer
 
 
 def test_model_decodes_padded_samples_and_shifts_timestamps_back():
@@ -246,9 +235,8 @@ def test_model_rejects_a_runaway_decode():
 
 
 def test_model_load_names_the_download_when_the_model_is_missing(tmp_path):
-    cfg = dataclasses.replace(Config.defaults().asr, cpu_threads=2)
     with pytest.raises(FileNotFoundError, match="model download --asr"):
-        Model(cfg, data_dir=tmp_path)
+        Model(data_dir=tmp_path)
 
 
 def test_only_an_empty_capture_skips_the_decoder():

@@ -32,7 +32,6 @@ WARNING_DESCRIPTIONS = {
     "files: speaker_pass_failed": "A file job got no speaker labels.",
     "sessions: speakers_failed": "Re-transcribe kept the speakers: speaker labels did not run.",
     "files: speakers_unavailable": "A file job got no speaker labels.",
-    "hotkey: enumerate_failed": "The keyboard devices could not be listed.",
     "hub: doctor_probe_failed": "The checks did not run.",
     "hub: session_job_failed": "A session job did not finish.",
     "hub: setup_test_failed": "A Checks test did not finish.",

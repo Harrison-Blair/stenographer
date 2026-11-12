@@ -18,19 +18,17 @@ def test_rejected_configuration_is_reported_verbatim_and_never_reaches_the_handl
     capsys,
 ):
     from stenographer.lib.config import paths
-    from stenographer.lib.logging import pipeline as logging_pipeline
 
     calls: list[str] = []
 
     def refuse() -> Config:
         raise ConfigError(
             pathlib.PurePosixPath("/cfg/config.toml"),
-            "asr.cpu_threads",
-            "must be 0-64",
+            "asr.idle_unload_seconds",
+            "must be 0-86400",
         )
 
     monkeypatch.setattr(paths, "load_or_default", refuse)
-    monkeypatch.setattr(logging_pipeline, "apply_stderr_level", lambda level: calls.append(level))
 
     @with_config
     def handler(args, cfg):
@@ -40,7 +38,7 @@ def test_rejected_configuration_is_reported_verbatim_and_never_reaches_the_handl
     assert handler(argparse.Namespace()) == 78
     assert calls == []
     assert capsys.readouterr().err == (
-        "stenographer: /cfg/config.toml: asr.cpu_threads: must be 0-64\n"
+        "stenographer: /cfg/config.toml: asr.idle_unload_seconds: must be 0-86400\n"
     )
 
 

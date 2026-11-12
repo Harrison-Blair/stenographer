@@ -54,7 +54,6 @@ def guidance() -> HostGuidance:
         service_start_command=f"systemctl --user start {_UNIT}",
         service_restart_command=f"systemctl --user restart {_UNIT}",
         service_log_command="journalctl --user -u stenographer -f",
-        hotkey_device_comment='explicit /dev/input/event* path; "" = auto-detect',
         run_with_config=run_with_config,
         clipboard_read_fix_hints={"wl-copy": "install wl-clipboard (wl-paste)", "x11": _XCLIP_HINT},
     )

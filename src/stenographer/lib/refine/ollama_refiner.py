@@ -78,7 +78,6 @@ class OllamaRefiner:
         host: str,
         model: str,
         min_words: int,
-        structured_output: bool,
         keep_alive: int,
         vocabulary: tuple[str, ...] = (),
         on_model_loading: Callable[[], None] | None = None,
@@ -87,7 +86,6 @@ class OllamaRefiner:
         self._host = host
         self._model = model
         self._min_words = min_words
-        self._structured_output = structured_output
         self._keep_alive = keep_alive
         self._vocabulary = vocabulary
         self._on_model_loading = on_model_loading
@@ -197,7 +195,6 @@ class OllamaRefiner:
             model=self._model,
             words=words,
             keep_alive=self._keep_alive,
-            structured_output=self._structured_output,
             profile=profile,
             vocabulary=self._vocabulary,
         )
@@ -212,12 +209,7 @@ class OllamaRefiner:
                 self._host, body, timeout=TIMEOUT_BASE_SECONDS + TIMEOUT_PER_WORD_SECONDS * words
             )
             self._check_stopped(cancelled)
-            candidate = refined_text(
-                payload,
-                text,
-                structured_output=self._structured_output,
-                profile=profile,
-            )
+            candidate = refined_text(payload, text, profile=profile)
         except Exception as exc:
             outcome = self._outcome_for(exc)
             self._last_result = RefineResult(

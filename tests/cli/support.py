@@ -20,7 +20,6 @@ GUIDANCE = HostGuidance(
     service_start_command="steno-agent start",
     service_restart_command="steno-agent restart",
     service_log_command="steno-agent logs -f",
-    hotkey_device_comment="device id; empty auto-detects",
     run_with_config=lambda path: f"STENO_CONFIG={path} stenographer run",
 )
 

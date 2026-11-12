@@ -11,7 +11,7 @@ import numpy as np
 import pytest
 from rich.text import Text
 from textual.app import App
-from textual.widgets import Button, Input, Select, Static
+from textual.widgets import Input, Select, Static
 
 from stenographer.cli.hub.checks_tab import ChecksTab
 from stenographer.cli.hub.engine_status import EngineStatus
@@ -19,7 +19,13 @@ from stenographer.cli.hub.widgets.speaker_bar import SpeakerBar
 from stenographer.cli.hub.widgets.spectrum_meter_model import SpectrumMeterModel
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
-from tests.cli.hub.support import _fields, _screen_text, _speaker_bar, make_app
+from tests.cli.hub.support import (
+    _fields,
+    _layout_problems,
+    _screen_text,
+    _speaker_bar,
+    make_app,
+)
 from tests.cli.hub.test_checks_tab import _board_report
 from tests.cli.hub.test_library import FakeJob
 from tests.cli.hub.test_library import FakeServices as LibraryServices
@@ -44,42 +50,6 @@ def _write_sessions(tmp_path, count):
         for line in ROOM_LINES:
             writer.append_line(line)
         writer.close()
-
-
-def _scrolls(node) -> bool:
-    return node.styles.overflow_y in {"auto", "scroll"}
-
-
-def _layout_problems(app) -> list[str]:
-    """Return each shown widget outside the screen or its parent, each overlap of two shown
-    siblings, and each cut button label.
-
-    Inside a scroll container a widget may leave its parent vertically, because the
-    container scrolls; it must still fit horizontally.
-    """
-    screen = app.screen
-    problems = []
-    shown = [widget for widget in screen.query("*") if widget.display and widget.region.area]
-    for widget in shown:
-        region = widget.region
-        name = widget.id or type(widget).__name__
-        parent = widget.parent
-        if any(_scrolls(node) for node in widget.ancestors if node is not screen):
-            box = parent.content_region
-            if region.x < box.x or region.right > box.right:
-                problems.append(f"{name} leaves {parent.id}: {region}")
-        else:
-            if not screen.region.contains_region(region):
-                problems.append(f"{name} leaves the screen: {region}")
-            if parent is not screen and not parent.content_region.contains_region(region):
-                problems.append(f"{name} leaves {parent.id}: {region}")
-        if isinstance(widget, Button) and widget.label.cell_length > widget.content_size.width:
-            problems.append(f"{name} cuts its label: {widget.label}")
-    for index, widget in enumerate(shown):
-        for other in shown[index + 1 :]:
-            if other.parent is widget.parent and widget.region.overlaps(other.region):
-                problems.append(f"{widget.id or type(widget).__name__} overlaps {other.id}")
-    return problems
 
 
 def _selected_rows(app) -> list[str]:
@@ -597,7 +567,7 @@ async def test_footer_hints_fit_on_every_screen_at_120_columns(tmp_path):
 async def test_settings_rows_show_no_description_and_values_use_the_free_width(tmp_path):
     services, _created = _services(tmp_path)
     app = _app(tmp_path, services)
-    async with app.run_test(size=(150, 45)) as pilot:
+    async with app.run_test(size=(100, 45)) as pilot:
         await pilot.press("3")
         await pilot.pause()
         # Label, marks and value only: the row ends with its value.
@@ -609,20 +579,20 @@ async def test_settings_rows_show_no_description_and_values_use_the_free_width(t
         for sentence in ("Agent binding", "Playback volume", "applies to new sessions"):
             assert sentence not in text
 
-        long_value = "alpha-" * 12
+        long_value = "alpha-" * 10
         row.set_value(long_value, changed=False)
         await pilot.pause()
         assert long_value in _screen_text(app), "a value without a note stays on one row"
 
 
-async def test_settings_row_shows_the_word_editing_while_its_input_is_open(tmp_path):
+async def test_settings_row_shows_no_note_while_its_input_is_open(tmp_path):
     services, _created = _services(tmp_path)
     app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("3", "enter")
         await pilot.pause()
         row = next(line for line in _screen_text(app).splitlines() if "Agent key" in line)
-        assert row.split("│")[1].split()[-1] == "editing"
+        assert "editing" not in row
         assert "enter keeps" not in row
         await pilot.press("escape")
         await pilot.pause()
@@ -639,7 +609,7 @@ async def test_settings_config_summary_is_the_first_row_of_the_panel(tmp_path):
         summary = app.screen.query_one("#config-summary", Static)
         assert summary.region.y == app.screen.query_one("#config-body").content_region.y
         assert summary.region.y < app.screen.query_one("#config-rows").region.y
-        assert str(summary.render()) == "config.toml · 0 unsaved changes · backups none yet"
+        assert str(summary.render()) == "config.toml · 0 unsaved changes   · backups none yet"
 
 
 # Size tiers (plan "Sizes", "Record", "Checks")

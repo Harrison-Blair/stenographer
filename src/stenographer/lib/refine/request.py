@@ -30,8 +30,6 @@ from stenographer.lib.refine.prompt import (
     NUM_PREDICT_BASE,
     NUM_PREDICT_MAX,
     NUM_PREDICT_PER_WORD,
-    RESPONSE_KEY,
-    RESPONSE_SCHEMA,
     SYSTEM_PROMPT,
 )
 
@@ -55,18 +53,9 @@ def num_predict_for(words: int) -> int:
     return min(NUM_PREDICT_MAX, NUM_PREDICT_BASE + NUM_PREDICT_PER_WORD * words)
 
 
-def _assistant_turn(cleaned: str, *, structured_output: bool) -> str:
-    """Render an example answer in whatever format the live reply will use."""
-
-    if not structured_output:
-        return cleaned
-    return json.dumps({RESPONSE_KEY: cleaned}, ensure_ascii=False)
-
-
 def build_messages(
     text: str,
     *,
-    structured_output: bool,
     profile: RefineProfile = RefineProfile.GENERAL,
     vocabulary: tuple[str, ...] = (),
 ) -> list[dict[str, str]]:
@@ -88,8 +77,7 @@ def build_messages(
         messages.append({"role": "system", "content": f"{VOCABULARY_INSTRUCTION}\n{terms}"})
     for spoken, cleaned in examples:
         messages.append({"role": "user", "content": spoken})
-        answer = _assistant_turn(cleaned, structured_output=structured_output)
-        messages.append({"role": "assistant", "content": answer})
+        messages.append({"role": "assistant", "content": cleaned})
     messages.append({"role": "user", "content": text})
     return messages
 
@@ -100,25 +88,19 @@ def build_chat_body(
     model: str,
     words: int,
     keep_alive: int,
-    structured_output: bool,
     profile: RefineProfile = RefineProfile.GENERAL,
     vocabulary: tuple[str, ...] = (),
 ) -> dict[str, object]:
     """The complete ``/api/chat`` body for one utterance."""
 
-    body: dict[str, object] = {
+    return {
         "model": model,
-        "messages": build_messages(
-            text, structured_output=structured_output, profile=profile, vocabulary=vocabulary
-        ),
+        "messages": build_messages(text, profile=profile, vocabulary=vocabulary),
         "stream": False,
         "think": False,
         "keep_alive": keep_alive,
         "options": {"temperature": 0, "num_predict": num_predict_for(words)},
     }
-    if structured_output:
-        body["format"] = RESPONSE_SCHEMA
-    return body
 
 
 def build_warm_body(*, model: str, keep_alive: int) -> dict[str, object]:

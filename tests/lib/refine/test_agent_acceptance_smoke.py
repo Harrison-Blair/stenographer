@@ -47,7 +47,6 @@ def refiner(installed_refiner):
         host=config.refine.host,
         model=config.refine.model,
         keep_alive=(-1 if config.asr.idle_unload_seconds <= 0 else config.asr.idle_unload_seconds),
-        structured_output=Config.defaults().refine.structured_output,
         min_words=1,
     )
 

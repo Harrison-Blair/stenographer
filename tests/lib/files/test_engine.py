@@ -391,13 +391,14 @@ def test_a_separated_job_runs_the_speaker_pass_before_it_transcribes(tmp_path):
         engine.close()
 
 
-def test_a_file_job_refine_request_carries_the_vocabulary(tmp_path, ollama_wire):
+def test_a_file_job_refine_request_carries_the_vocabulary(tmp_path, ollama_wire, monkeypatch):
+    from stenographer.lib.refine import factory
+
+    monkeypatch.setattr(factory, "MIN_WORDS", 1)
     defaults = Config.defaults()
     config = dataclasses.replace(
         defaults,
-        refine=dataclasses.replace(
-            defaults.refine, min_words=1, vocabulary=("Kubernetes", "PipeWire")
-        ),
+        refine=dataclasses.replace(defaults.refine, vocabulary=("Kubernetes", "PipeWire")),
     )
     engine = FilesEngine(
         config,

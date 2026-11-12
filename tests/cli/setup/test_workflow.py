@@ -209,30 +209,22 @@ def test_full_review_lists_every_section_and_field():
         "\nReview",
         "[hotkey]",
         "  binding = KEY_RIGHTCTRL",
-        "  device = automatic/unset",
         "  cancel_binding = KEY_ESC",
         "  mode = hybrid",
-        "  hybrid_threshold_seconds = 0.5",
         "  general_binding = KEY_RIGHTALT",
         "[audio]",
         "  input_device = automatic/unset",
-        "  max_recording_seconds = 600",
         "[asr]",
         "  idle_unload_seconds = 900",
-        "  cpu_threads = 0",
         "[feedback]",
         "  volume = 0.6",
-        "  mute = False",
         "  overlay = True",
         "  spectrum_floor_dbfs = -45.0",
         "  sound_pack = minimal-ui",
-        "  log_level = info",
         "[refine]",
         "  enabled = True",
         "  host = http://127.0.0.1:11434",
         "  model = gemma4:e2b",
-        "  min_words = 10",
-        "  structured_output = False",
         "  vocabulary = ()",
     ]
 
@@ -252,18 +244,16 @@ def test_quick_review_lists_only_the_keys_the_quick_wizard_edits():
 
     assert lines == [
         "\nQuick setup review",
-        "  hotkey.device = automatic/unset",
         "  hotkey.binding = KEY_RIGHTCTRL",
         "  hotkey.mode = hybrid",
         "  audio.input_device = automatic/unset",
         "  feedback.volume = 0.6",
-        "  feedback.mute = False",
         "  feedback.overlay = True",
         "  feedback.sound_pack = minimal-ui",
         "  feedback.spectrum_floor_dbfs = -45.0",
         "  refine.enabled = True",
         "  refine.model = gemma4:e2b",
-        "Recording-limit and all ASR settings will be retained unchanged.",
+        "All ASR settings will be retained unchanged.",
     ]
 
 
@@ -283,61 +273,6 @@ def test_setup_requires_an_interactive_terminal():
     stderr = io.StringIO()
     assert setup.run(stdin=io.StringIO(), stdout=io.StringIO(), stderr=stderr) == 2
     assert "requires an interactive terminal" in stderr.getvalue()
-
-
-def test_setup_applies_loaded_then_reviewed_log_levels_before_followup_work(setup_run, tmp_path):
-    from stenographer.lib.config.document import SaveResult
-
-    defaults = Config.defaults()
-    loaded = dataclasses.replace(
-        defaults, feedback=dataclasses.replace(defaults.feedback, log_level="warning")
-    )
-    reviewed = dataclasses.replace(
-        loaded, feedback=dataclasses.replace(loaded.feedback, log_level="debug")
-    )
-    events = setup_run.levels
-
-    def save(config):
-        assert config is reviewed
-        events.append("save")
-        return SaveResult(False, tmp_path / "config.toml")
-
-    code, _, _ = setup_run(
-        document=_document_double(tmp_path, config=loaded, save=save),
-        wizard=lambda *args, **kwargs: events.append("wizard") or reviewed,
-        guided=lambda *args, **kwargs: events.append("guided") or 0,
-    )
-    assert code == 0
-    assert events == ["warning", "wizard", "save", "debug", "guided"]
-
-
-def test_setup_does_not_apply_a_level_when_loading_fails(setup_run):
-    code, _, _ = setup_run(document=78)
-    assert code == 78
-    assert setup_run.levels == []
-
-
-def test_setup_save_failure_keeps_the_loaded_level(setup_run, tmp_path):
-    from stenographer.lib.config.errors import ConfigPersistenceError
-
-    defaults = Config.defaults()
-    loaded = dataclasses.replace(
-        defaults, feedback=dataclasses.replace(defaults.feedback, log_level="warning")
-    )
-    reviewed = dataclasses.replace(
-        loaded, feedback=dataclasses.replace(loaded.feedback, log_level="debug")
-    )
-
-    def save(config):
-        assert config is reviewed
-        raise ConfigPersistenceError("save failed")
-
-    code, _, _ = setup_run(
-        document=_document_double(tmp_path, config=loaded, save=save),
-        wizard=lambda *args, **kwargs: reviewed,
-    )
-    assert code == 1
-    assert setup_run.levels == ["warning"]
 
 
 def test_write_default_creates_the_annotated_template(tmp_path, monkeypatch):
@@ -455,15 +390,15 @@ def test_prompt_choice_lists_every_choice_and_retries_until_one_matches():
 def test_prompt_bool_marks_the_current_answer(current, marker, answer, expected):
     console = _console(answer)
 
-    assert setup._prompt_bool(console, "Mute cues", current) is expected
-    assert console.stdout.getvalue() == f"Mute cues (yes/no) {marker}: "
+    assert setup._prompt_bool(console, "Show lifecycle overlay", current) is expected
+    assert console.stdout.getvalue() == f"Show lifecycle overlay (yes/no) {marker}: "
 
 
 def test_prompt_number_states_its_bounds_and_retries_until_one_fits():
     console = _console("99\n7\n")
 
-    assert setup._prompt_number(console, "CPU threads", 1, 1, 10, integer=True) == 7
-    assert console.stdout.getvalue().startswith("CPU threads [1; 1..10]: ")
+    assert setup._prompt_number(console, "Idle unload seconds", 1, 1, 10, integer=True) == 7
+    assert console.stdout.getvalue().startswith("Idle unload seconds [1; 1..10]: ")
     assert console.stderr.getvalue() == "stenographer: must be in [1, 10]\n"
 
 
@@ -529,44 +464,36 @@ def test_typed_binding_enter_keeps_the_current_chord(key_vocabulary):
 
 @pytest.fixture
 def device_menus(monkeypatch):
-    """Offer fixed device menus instead of enumerating PortAudio or /dev/input."""
+    """Offer a fixed microphone menu instead of enumerating PortAudio."""
 
-    monkeypatch.setattr(setup, "_hotkey_devices", lambda: [("event3", "event3: Keyboard")])
     monkeypatch.setattr(setup, "_audio_devices", lambda: [("1", "1: USB mic")])
 
 
-def test_edit_hotkey_asks_binding_device_mode_and_threshold(key_vocabulary, device_menus):
-    console = _console("KEY_F9\nKEY_F10\n1\ntoggle\n1.25\n")
+def test_edit_hotkey_asks_the_two_bindings_and_the_mode(key_vocabulary, device_menus):
+    console = _console("KEY_F9\nKEY_F10\ntoggle\n")
 
     hotkey = setup._edit_hotkey(console, Config.defaults()).hotkey
 
     assert hotkey.binding == "KEY_F9"
     assert hotkey.general_binding == "KEY_F10"
-    assert hotkey.device == "event3"
     assert hotkey.mode == "toggle"
-    assert hotkey.hybrid_threshold_seconds == 1.25
-    assert "  1. event3: Keyboard" in console.stdout.getvalue()
 
 
-def test_edit_audio_asks_the_device_and_recording_limit(device_menus):
-    console = _console("1\n120\n")
+def test_edit_audio_asks_the_device(device_menus):
+    console = _console("1\n")
 
     audio = setup._edit_audio(console, Config.defaults()).audio
 
     assert audio.input_device == "1"
-    assert audio.max_recording_seconds == 120
 
 
-def test_edit_asr_asks_only_the_two_recognition_keys_in_order():
-    console = _console("60\n4\n")
+def test_edit_asr_asks_only_the_idle_unload():
+    console = _console("60\n")
 
     asr = setup._edit_asr(console, Config.defaults()).asr
 
     assert asr.idle_unload_seconds == 60
-    assert asr.cpu_threads == 4
-    assert console.stdout.getvalue() == (
-        "\nASR\nIdle unload seconds [900; 0..86400]: CPU threads (0 = auto) [0; 0..64]: "
-    )
+    assert console.stdout.getvalue() == "\nASR\nIdle unload seconds [900; 0..86400]: "
 
 
 def test_choose_floor_keeps_the_current_response_without_touching_the_microphone():
@@ -602,14 +529,13 @@ def test_manual_floor_offers_a_scalar_default_when_a_profile_is_current():
 
 
 def test_feedback_section_skips_calibration_when_the_overlay_is_off(tmp_path):
-    console = _console("0.9\n\nno\n\n")
+    console = _console("0.9\nno\n\n")
 
     config = setup._edit_feedback_section(
         console,
         Config.defaults(),
         tmp_path,
         notice=("IMPORTANT: bars only.",),
-        ask_log_level=False,
     )
 
     assert config.feedback.volume == 0.9
@@ -618,7 +544,6 @@ def test_feedback_section_skips_calibration_when_the_overlay_is_off(tmp_path):
     stdout = console.stdout.getvalue()
     assert "IMPORTANT: bars only." in stdout
     assert "Overlay is disabled, so display-spectrum calibration was skipped." in stdout
-    assert "Log level" not in stdout
     assert "Spectrum response" not in stdout
 
 
@@ -630,39 +555,21 @@ def test_full_wizard_skips_calibration_and_keeps_the_floor_when_the_overlay_is_o
         feedback=dataclasses.replace(defaults.feedback, spectrum_floor_dbfs=floor),
     )
     # The trailing "keep" answers the question if it is asked, so no capture can start.
-    console = _console("\n\nno\n\n\nkeep\n")
+    console = _console("\nno\n\nkeep\n")
 
     config = setup._edit_feedback(console, initial, config_dir=tmp_path)
 
     assert config.feedback.overlay is False
     assert config.feedback.spectrum_floor_dbfs == floor
     stdout = console.stdout.getvalue()
-    assert "Log level" in stdout
     assert "Spectrum response" not in stdout
     assert "Overlay is disabled, so display-spectrum calibration was skipped." in stdout
-
-
-def test_full_feedback_section_asks_the_log_level_and_the_spectrum_response(tmp_path):
-    console = _console("\n\n\n\ndebug\nkeep\n")
-
-    config = setup._edit_feedback_section(
-        console,
-        Config.defaults(),
-        tmp_path,
-        notice=("IMPORTANT: bars only.",),
-        ask_log_level=True,
-    )
-
-    assert config.feedback.log_level == "debug"
-    stdout = console.stdout.getvalue()
-    assert "Log level (debug/error/info/warning) [info]: " in stdout
-    assert "Spectrum response" in stdout
 
 
 #: Enter keeps every value; the wizard asks five sections then the review.
 #: The trailing answer is explicit "no" to "Enable transcript refinement",
 #: which now defaults to yes, so the wizard never reaches the Ollama probe.
-_KEEP_EVERYTHING = "\n" * 14 + "keep\n" + "no\n"
+_KEEP_EVERYTHING = "\n" * 8 + "keep\n" + "no\n"
 
 
 def test_wizard_walks_every_section_then_saves_the_reviewed_configuration(
@@ -671,10 +578,10 @@ def test_wizard_walks_every_section_then_saves_the_reviewed_configuration(
     tmp_path,
 ):
     console = _console(
-        "KEY_F9\n\n1\ntoggle\n\n"  # Agent, General, device, mode, threshold
-        "auto\n120\n"  # audio
-        "\n4\n"  # asr
-        "0.9\n\n\nlegacy\ndebug\nkeep\n"  # feedback
+        "KEY_F9\n\ntoggle\n"  # Agent, General, mode
+        "auto\n"  # audio
+        "4\n"  # asr
+        "0.9\n\nlegacy\nkeep\n"  # feedback
         "no\n"  # refine: turn off
         "\n"  # review: save
     )
@@ -682,14 +589,11 @@ def test_wizard_walks_every_section_then_saves_the_reviewed_configuration(
     config = setup._wizard(console, Config.defaults(), tmp_path)
 
     assert config.hotkey.binding == "KEY_F9"
-    assert config.hotkey.device == "event3"
     assert config.hotkey.mode == "toggle"
     assert config.audio.input_device is None
-    assert config.audio.max_recording_seconds == 120
-    assert config.asr.cpu_threads == 4
+    assert config.asr.idle_unload_seconds == 4
     assert config.feedback.volume == 0.9
     assert config.feedback.sound_pack == "legacy"
-    assert config.feedback.log_level == "debug"
     assert "\nReview" in console.stdout.getvalue()
 
 
@@ -697,14 +601,13 @@ def test_wizard_reopens_the_section_the_reviewer_names(key_vocabulary, device_me
     console = _console(
         _KEEP_EVERYTHING
         + "2\n"  # review: re-edit audio
-        + "1\n90\n"  # audio again
+        + "1\n"  # audio again
         + "\n"  # review: save
     )
 
     config = setup._wizard(console, Config.defaults(), tmp_path)
 
     assert config.audio.input_device == "1"
-    assert config.audio.max_recording_seconds == 90
     assert console.stdout.getvalue().count("\nReview") == 2
 
 
@@ -722,12 +625,7 @@ def test_wizard_cancel_raises_so_nothing_is_saved(key_vocabulary, device_menus, 
 def test_capture_or_choose_binding_keep_and_type_arms(key_vocabulary, answers, expected):
     console = _console(answers)
 
-    result = setup._capture_or_choose_binding(
-        console,
-        "KEY_RIGHTCTRL",
-        None,
-        new_config=False,
-    )
+    result = setup._capture_or_choose_binding(console, "KEY_RIGHTCTRL", new_config=False)
 
     assert result == expected
     assert "Binding (capture/keep/type) [keep]: " in console.stdout.getvalue()
@@ -736,7 +634,7 @@ def test_capture_or_choose_binding_keep_and_type_arms(key_vocabulary, answers, e
 def test_capture_is_the_default_offer_for_a_brand_new_configuration(key_vocabulary):
     console = _console("keep\n")
 
-    setup._capture_or_choose_binding(console, "KEY_RIGHTCTRL", None, new_config=True)
+    setup._capture_or_choose_binding(console, "KEY_RIGHTCTRL", new_config=True)
 
     assert "Binding (capture/keep/type) [capture]: " in console.stdout.getvalue()
 
@@ -752,18 +650,6 @@ def test_audio_device_menu_comes_from_the_shared_source_listing(monkeypatch):
     )
 
     assert setup._audio_devices() == [("alsa_input.usb", "USB mic")]
-
-
-def test_hotkey_device_menu_comes_from_the_platform_provider(monkeypatch):
-    from stenographer.lib import platform as platform_module
-
-    class Plat:
-        def hotkey_devices(self):
-            return [("event3", "event3: Keyboard")]
-
-    monkeypatch.setattr(platform_module, "current_platform", Plat)
-
-    assert setup._hotkey_devices() == [("event3", "event3: Keyboard")]
 
 
 @pytest.fixture
@@ -879,20 +765,22 @@ def binding_capture(monkeypatch):
     return install
 
 
-def test_setup_captures_from_its_stdin_and_device_with_the_15_second_timeout(binding_capture):
+def test_setup_captures_from_its_stdin_on_every_keyboard_with_the_15_second_timeout(
+    binding_capture,
+):
     calls = binding_capture("KEY_F9")
     console = _console("capture\ny\n")
 
-    setup._capture_or_choose_binding(console, "KEY_RIGHTCTRL", "/dev/input/event3", new_config=True)
+    setup._capture_or_choose_binding(console, "KEY_RIGHTCTRL", new_config=True)
 
-    assert calls == [(console.stdin, "/dev/input/event3", 15.0)]
+    assert calls == [(console.stdin, None, 15.0)]
 
 
 def test_a_captured_binding_is_offered_for_confirmation(binding_capture):
     binding_capture("KEY_LEFTCTRL+KEY_F9")
     console = _console("capture\ny\n")
 
-    result = setup._capture_or_choose_binding(console, "KEY_RIGHTCTRL", None, new_config=True)
+    result = setup._capture_or_choose_binding(console, "KEY_RIGHTCTRL", new_config=True)
 
     assert result == "KEY_LEFTCTRL+KEY_F9"
     stdout = console.stdout.getvalue()
@@ -904,7 +792,7 @@ def test_a_rejected_capture_can_be_retried(binding_capture):
     binding_capture("KEY_F9", "KEY_F10")
     console = _console("capture\nn\nretry\ny\n")
 
-    result = setup._capture_or_choose_binding(console, "KEY_RIGHTCTRL", None, new_config=True)
+    result = setup._capture_or_choose_binding(console, "KEY_RIGHTCTRL", new_config=True)
 
     assert result == "KEY_F10"
 
@@ -918,7 +806,7 @@ def test_a_failed_capture_is_reported_and_may_be_typed_instead(
     binding_capture(BindingCaptureError("no readable input device"))
     console = _console("capture\ntype\nKEY_F9\n")
 
-    result = setup._capture_or_choose_binding(console, "KEY_RIGHTCTRL", None, new_config=True)
+    result = setup._capture_or_choose_binding(console, "KEY_RIGHTCTRL", new_config=True)
 
     assert result == "KEY_F9"
     assert console.stderr.getvalue() == (
@@ -932,7 +820,7 @@ def test_a_failed_capture_may_keep_the_current_binding(binding_capture):
     binding_capture(BindingCaptureError("no readable input device"))
     console = _console("capture\nkeep\n")
 
-    result = setup._capture_or_choose_binding(console, "KEY_RIGHTCTRL", None, new_config=True)
+    result = setup._capture_or_choose_binding(console, "KEY_RIGHTCTRL", new_config=True)
 
     assert result == "KEY_RIGHTCTRL"
 
@@ -1373,11 +1261,7 @@ def _document_double(tmp_path, *, save=None, config=None):
 def setup_run(monkeypatch, tmp_path):
     """Run ``setup`` past its terminal gate with the document and wizard supplied."""
 
-    from stenographer.lib.logging import pipeline as logging_setup
-
     monkeypatch.setattr(setup, "require_interactive", lambda *args, **kwargs: None)
-    levels = []
-    monkeypatch.setattr(logging_setup, "apply_stderr_level", levels.append)
 
     def invoke(*, document=None, wizard=None, guided=None, quick=False):
         monkeypatch.setattr(
@@ -1398,7 +1282,6 @@ def setup_run(monkeypatch, tmp_path):
         code = setup.run(quick=quick, stdin=io.StringIO(), stdout=stdout, stderr=stderr)
         return code, stdout.getvalue(), stderr.getvalue()
 
-    invoke.levels = levels
     return invoke
 
 
@@ -1609,14 +1492,12 @@ def test_enabling_refine_lists_installed_models_and_takes_a_numbered_choice(monk
     monkeypatch.setattr(
         refine_client, "installed_model_names", lambda host: ["first:tag", "second:tag"]
     )
-    console = _console("yes\n\n2\n20\nyes\n")
+    console = _console("yes\n\n2\n")
 
     config = setup._edit_refine_section(console, Config.defaults(), ask_details=True)
 
     assert config.refine.enabled is True
     assert config.refine.model == "second:tag"
-    assert config.refine.min_words == 20
-    assert config.refine.structured_output is True
     assert "  1. first:tag" in console.stdout.getvalue()
     assert "Verified:" in console.stdout.getvalue()
 
@@ -1703,5 +1584,4 @@ def test_the_model_hint_names_the_benchmarked_default_rather_than_a_literal():
     hint = setup.refine_model_hint()
 
     assert DEFAULT_MODEL in hint
-    assert "qwen3.5:4b" in hint and "structured_output" in hint
     assert "unverified" in hint

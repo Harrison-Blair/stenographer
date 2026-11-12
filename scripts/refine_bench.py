@@ -7,7 +7,6 @@ its request settings can be re-chosen later. Nothing here is imported by the app
 
 Example:
     .venv/bin/python scripts/refine_bench.py --model qwen3.5:4b --model gemma3:4b
-    .venv/bin/python scripts/refine_bench.py --model qwen3:4b --structured
 """
 
 from __future__ import annotations
@@ -20,7 +19,6 @@ import urllib.request
 from dataclasses import dataclass
 
 from stenographer.lib.refine.profiles import RefineProfile
-from stenographer.lib.refine.prompt import RESPONSE_SCHEMA
 from stenographer.lib.refine.request import build_messages
 
 DEFAULT_HOST = "http://127.0.0.1:11434"
@@ -108,7 +106,6 @@ class Settings:
 
     host: str
     think: bool
-    structured: bool
     num_predict: int
     keep_alive: str
     timeout: float
@@ -156,23 +153,9 @@ def build_body(model: str, text: str, settings: Settings) -> dict:
         "think": settings.think,
         "keep_alive": settings.keep_alive,
         "options": {"temperature": 0, "num_predict": settings.num_predict},
-        "messages": build_messages(
-            text, structured_output=settings.structured, profile=RefineProfile.GENERAL
-        ),
+        "messages": build_messages(text, profile=RefineProfile.GENERAL),
     }
-    if settings.structured:
-        body["format"] = RESPONSE_SCHEMA
     return body
-
-
-def unwrap(output: str, settings: Settings) -> str:
-    """Pull the cleaned text out of a reply, decoding the JSON envelope when used."""
-    if not settings.structured:
-        return output
-    try:
-        return str(json.loads(output)["text"])
-    except (ValueError, KeyError, TypeError):
-        return f"!!PARSE_FAIL {output[:400]!r}"
 
 
 def run_sample(model: str, name: str, text: str, settings: Settings) -> Result:
@@ -186,7 +169,7 @@ def run_sample(model: str, name: str, text: str, settings: Settings) -> Result:
     return Result(
         name=name,
         text=text,
-        output=unwrap(str(message.get("content", "")).strip(), settings),
+        output=str(message.get("content", "")).strip(),
         wall=wall,
         load=payload.get("load_duration", 0) / 1e9,
         prompt_tokens=payload.get("prompt_eval_count", 0),
@@ -230,7 +213,7 @@ def resident_vram(model: str, settings: Settings) -> float:
 
 def report(model: str, settings: Settings, cold: Result, warm: list[Result]) -> None:
     """Print the timing table and every output for one model."""
-    print(f"\n{'=' * 78}\nmodel={model} think={settings.think} structured={settings.structured} ")
+    print(f"\n{'=' * 78}\nmodel={model} think={settings.think} ")
     print(f"num_predict={settings.num_predict} keep_alive={settings.keep_alive}\n{'=' * 78}")
     print(
         f"[cold] wall={cold.wall:6.2f}s load={cold.load:6.2f}s "
@@ -272,12 +255,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--host", default=DEFAULT_HOST, help="Ollama base URL")
     parser.add_argument("--model", action="append", required=True, help="model tag (repeatable)")
     parser.add_argument("--think", action="store_true", help="enable model thinking")
-    parser.add_argument(
-        "--structured",
-        action=argparse.BooleanOptionalAction,
-        default=False,
-        help='constrain output with the JSON schema {"text": string}',
-    )
     parser.add_argument("--num-predict", type=int, default=DEFAULT_NUM_PREDICT)
     parser.add_argument("--keep-alive", default=DEFAULT_KEEP_ALIVE)
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT)
@@ -296,7 +273,6 @@ def main(argv: list[str] | None = None) -> int:
     settings = Settings(
         host=args.host.rstrip("/"),
         think=args.think,
-        structured=args.structured,
         num_predict=args.num_predict,
         keep_alive=args.keep_alive,
         timeout=args.timeout,

@@ -77,7 +77,7 @@ def test_transcribe_through_child_matches_in_process():
     samples = _read(_CLIP)
     cfg = Config.defaults()
 
-    in_process = v2model.Model(cfg.asr)
+    in_process = v2model.Model()
     try:
         expected = in_process.transcribe(samples)
     finally:

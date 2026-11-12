@@ -77,12 +77,12 @@ async def test_widget_settings_tab_click_matches_the_tab_keys(tmp_path):
     path.write_text(default_toml(), encoding="utf-8")
     app = HubApp(IdleServices(), config_editor=ConfigEditor(path))
     async with app.run_test(size=(150, 45)) as pilot:
-        await pilot.press("3", "right", "right")
+        await pilot.press("3", "right")
         by_keys = (app.settings_screen.tab, app.config_editor.visible_keys)
-        await pilot.click("#tab-general")
+        await pilot.click("#tab-settings")
         await pilot.pause()
-        assert app.settings_screen.tab == "general"
-        await pilot.click("#tab-recognition")
+        assert app.settings_screen.tab == "settings"
+        await pilot.click("#tab-checks")
         await pilot.pause()
         assert (app.settings_screen.tab, app.config_editor.visible_keys) == by_keys
 

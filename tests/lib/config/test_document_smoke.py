@@ -60,7 +60,7 @@ def test_save_creates_exact_backup_and_preserves_mode(tmp_path):
     path.write_bytes(original)
     path.chmod(0o640)
     document = ConfigDocument.load(path)
-    reviewed = replace(document.config, feedback=replace(document.config.feedback, mute=True))
+    reviewed = replace(document.config, feedback=replace(document.config.feedback, overlay=False))
 
     result = document.save(
         reviewed,
@@ -77,11 +77,11 @@ def test_save_creates_exact_backup_and_preserves_mode(tmp_path):
 
 def test_save_never_overwrites_an_existing_backup(tmp_path):
     path = tmp_path / "config.toml"
-    path.write_text("[stenographer.feedback]\nmute = false\n")
+    path.write_text("[stenographer.feedback]\noverlay = true\n")
     occupied = tmp_path / "config.toml.bak-20260820T182233123456Z"
     occupied.write_text("older backup")
     document = ConfigDocument.load(path)
-    reviewed = replace(document.config, feedback=replace(document.config.feedback, mute=True))
+    reviewed = replace(document.config, feedback=replace(document.config.feedback, overlay=False))
 
     result = document.save(
         reviewed,
@@ -94,11 +94,11 @@ def test_save_never_overwrites_an_existing_backup(tmp_path):
 
 def test_save_follows_symlink_without_replacing_it(tmp_path):
     target = tmp_path / "actual.toml"
-    target.write_text("[stenographer.feedback]\nmute = false\n")
+    target.write_text("[stenographer.feedback]\noverlay = true\n")
     link = tmp_path / "config.toml"
     link.symlink_to(target.name)
     document = ConfigDocument.load(link)
-    reviewed = replace(document.config, feedback=replace(document.config.feedback, mute=True))
+    reviewed = replace(document.config, feedback=replace(document.config.feedback, overlay=False))
 
     result = document.save(reviewed)
 
@@ -112,14 +112,14 @@ def test_save_follows_symlink_without_replacing_it(tmp_path):
 
 def test_save_refuses_concurrent_content_change(tmp_path):
     path = tmp_path / "config.toml"
-    path.write_text("[stenographer.feedback]\nmute = false\n")
+    path.write_text("[stenographer.feedback]\noverlay = true\n")
     document = ConfigDocument.load(path)
-    path.write_text("[stenographer.feedback]\nmute = true\n")
+    path.write_text("[stenographer.feedback]\noverlay = false\n")
 
     with pytest.raises(ConfigChangedError):
         document.save(document.config)
 
-    assert path.read_text() == "[stenographer.feedback]\nmute = true\n"
+    assert path.read_text() == "[stenographer.feedback]\noverlay = false\n"
     assert not list(tmp_path.glob("*.bak-*"))
 
 

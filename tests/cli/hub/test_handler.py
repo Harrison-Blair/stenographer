@@ -75,8 +75,7 @@ def test_hub_warms_worker_before_running_the_app(monkeypatch, tmp_path):
             events.append("close")
 
     class Transport:
-        def spawn(self, config, *, on_log):
-            assert config is cfg.asr
+        def spawn(self, *, on_log):
             assert callable(on_log)
             events.append("spawn")
             return Process()
@@ -86,22 +85,17 @@ def test_hub_warms_worker_before_running_the_app(monkeypatch, tmp_path):
         data_dir=lambda *_args: tmp_path,
     )
     monkeypatch.setattr(handler, "current_platform", lambda: platform)
-    cfg = SimpleNamespace(asr=object(), feedback=SimpleNamespace(log_level="debug"))
+    cfg = SimpleNamespace()
     config_path = tmp_path / "config.toml"
     from stenographer.lib.config.defaults import default_toml
 
     config_path.write_text(default_toml(), encoding="utf-8")
     monkeypatch.setattr(handler, "resolve_config_path", lambda: config_path)
     monkeypatch.setattr(handler, "load_or_default", lambda: cfg)
-    monkeypatch.setattr(
-        handler,
-        "apply_stderr_level",
-        lambda level: events.append(f"level:{level}"),
-    )
     monkeypatch.setattr(handler, "_run_app", lambda _services, _editor: events.append("app"))
 
     assert handler.cmd_hub(SimpleNamespace()) == 0
-    assert events == ["level:debug", "spawn", "close", "app"]
+    assert events == ["spawn", "close", "app"]
 
 
 def test_hub_opens_invalid_config_read_only_without_starting_worker(monkeypatch, tmp_path):
@@ -110,13 +104,15 @@ def test_hub_opens_invalid_config_read_only_without_starting_worker(monkeypatch,
     from stenographer.lib.config.models import Config
 
     path = tmp_path / "config.toml"
-    path.write_text("[stenographer.asr]\ncpu_threads = 100\n", encoding="utf-8")
+    path.write_text("[stenographer.asr]\nidle_unload_seconds = -1\n", encoding="utf-8")
     platform = SimpleNamespace()
     monkeypatch.setattr(handler, "resolve_config_path", lambda: path)
     monkeypatch.setattr(
         handler,
         "load_or_default",
-        lambda: (_ for _ in ()).throw(ConfigError(path, "asr.cpu_threads", "must be in [0, 64]")),
+        lambda: (_ for _ in ()).throw(
+            ConfigError(path, "asr.idle_unload_seconds", "must be in [0, 86400]")
+        ),
     )
     monkeypatch.setattr(handler, "current_platform", lambda: platform)
     opened = []
@@ -130,7 +126,7 @@ def test_hub_opens_invalid_config_read_only_without_starting_worker(monkeypatch,
     services, editor = opened[0]
     assert editor.read_only
     assert str(path) in editor.error_text()
-    assert services._config.asr.cpu_threads == Config.defaults().asr.cpu_threads
+    assert services._config == Config.defaults()
 
 
 def test_hub_services_do_not_create_a_session_until_recording_starts(tmp_path):
@@ -234,7 +230,7 @@ def _prepare_hub(monkeypatch, tmp_path, run_app):
     from stenographer.lib.config.defaults import default_toml
 
     class Transport:
-        def spawn(self, _config, *, on_log):
+        def spawn(self, *, on_log):
             return SimpleNamespace(close=lambda: None)
 
     config_path = tmp_path / "config.toml"

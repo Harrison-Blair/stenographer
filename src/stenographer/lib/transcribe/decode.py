@@ -27,11 +27,9 @@ _AUTO_CPU_THREAD_CAP = 8
 _CPU_THREAD_FALLBACK = 4
 
 
-def resolve_cpu_threads(configured: int, physical_cores: int | None) -> int:
-    """Explicit value passes through; else *physical_cores* capped at eight,
-    falling back to four when the host could not count them."""
-    if configured:
-        return configured
+def resolve_cpu_threads(physical_cores: int | None) -> int:
+    """*physical_cores* capped at eight, falling back to four when the host
+    could not count them."""
     if physical_cores is None or physical_cores < 1:
         return _CPU_THREAD_FALLBACK
     return min(_AUTO_CPU_THREAD_CAP, physical_cores)

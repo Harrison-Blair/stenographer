@@ -20,7 +20,6 @@ import threading
 import pytest
 
 from stenographer.lib.refine import ollama_refiner
-from stenographer.lib.refine.prompt import RESPONSE_KEY
 from stenographer.lib.refine.results import OUTCOME_APPLIED, OUTCOME_CANCELLED
 from tests.lib.refine.helpers import CLEANED, SPOKEN, _refiner
 
@@ -74,8 +73,7 @@ class _Transport:
         if self.block_chat and not self.chat_release.wait(timeout=_DEADLINE):
             raise _HarnessFailure("the chat request was never released")
         self._note("chat")
-        content = json.dumps({RESPONSE_KEY: CLEANED})
-        return json.dumps({"message": {"content": content}}).encode()
+        return json.dumps({"message": {"content": CLEANED}}).encode()
 
     def is_model_loaded(self, host, model):
         self._note("probe")

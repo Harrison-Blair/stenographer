@@ -12,6 +12,9 @@ if TYPE_CHECKING:
 
     from stenographer.lib.config.models import RefineConfig
 
+#: Shorter utterances are delivered without a refine.
+MIN_WORDS = 10
+
 
 def build_refiner(
     cfg: RefineConfig,
@@ -34,8 +37,7 @@ def build_refiner(
     return OllamaRefiner(
         host=cfg.host,
         model=cfg.model,
-        min_words=cfg.min_words,
-        structured_output=cfg.structured_output,
+        min_words=MIN_WORDS,
         keep_alive=-1 if idle_unload_seconds <= 0 else int(idle_unload_seconds),
         vocabulary=cfg.vocabulary,
         on_model_loading=on_model_loading,

@@ -71,10 +71,9 @@ def test_a_failed_playback_is_reported(monkeypatch):
     )
 
 
-@pytest.mark.parametrize(("mute", "volume", "expected"), [(False, 0.4, 0.4), (True, 0.4, 0.6)])
+@pytest.mark.parametrize(("volume", "expected"), [(0.4, 0.4), (0.0, 0.6)])
 def test_a_successful_preview_passes_the_pack_player_and_audible_volume(
     monkeypatch,
-    mute,
     volume,
     expected,
 ):
@@ -93,7 +92,7 @@ def test_a_successful_preview_passes_the_pack_player_and_audible_volume(
     defaults = Config.defaults()
     config = dataclasses.replace(
         defaults,
-        feedback=dataclasses.replace(defaults.feedback, mute=mute, volume=volume),
+        feedback=dataclasses.replace(defaults.feedback, volume=volume),
     )
     console = _console()
 
@@ -102,26 +101,21 @@ def test_a_successful_preview_passes_the_pack_player_and_audible_volume(
     assert console.stderr.getvalue() == ""
 
 
-@pytest.mark.parametrize(("mute", "volume"), [(True, 0.4), (True, 0.6), (False, 0.0)])
-def test_a_preview_that_overrides_silence_says_so_and_changes_no_setting(
-    monkeypatch,
-    mute,
-    volume,
-):
+def test_a_preview_that_overrides_silence_says_so_and_changes_no_setting(monkeypatch):
     from stenographer.lib import platform as platform_module
     from stenographer.lib.sounds import playback
 
     monkeypatch.setattr(platform_module, "current_platform", _platform(object()))
     monkeypatch.setattr(playback, "preview_sound_pack", lambda one, two, three: None)
     defaults = Config.defaults()
-    feedback = dataclasses.replace(defaults.feedback, mute=mute, volume=volume)
+    feedback = dataclasses.replace(defaults.feedback, volume=0.0)
     config = dataclasses.replace(defaults, feedback=feedback)
     console = _console()
 
     assert _preview(console, config, object()) is True
     assert console.stdout.getvalue() == (
-        "Cues are muted or at volume zero: this preview plays at volume 0.6 "
-        "and changes neither setting.\n"
+        "Cues are at volume zero: this preview plays at volume 0.6 "
+        "and does not change the setting.\n"
     )
 
 
@@ -134,7 +128,7 @@ def test_a_preview_at_the_configured_volume_prints_no_note(monkeypatch):
     defaults = Config.defaults()
     config = dataclasses.replace(
         defaults,
-        feedback=dataclasses.replace(defaults.feedback, mute=False, volume=0.4),
+        feedback=dataclasses.replace(defaults.feedback, volume=0.4),
     )
     console = _console()
 

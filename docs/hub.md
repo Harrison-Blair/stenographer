@@ -21,9 +21,9 @@ screen. Keys `4` to `6` do nothing.
 | --- | --- | --- |
 | `1` | Record | Record microphone and system audio, and view the transcript. |
 | `2` | Library | Review saved sessions, and transcribe audio files. |
-| `3` | Settings | Edit settings by tab, and run the system checks. |
+| `3` | Settings | Edit settings on one page, and run the system checks. |
 
-Each screen has one top line and one row of key hints at the bottom. Long Settings values wrap. The hint row
+Each screen has one top line and one row of key hints at the bottom. Long Settings values are cut with `…`. The hint row
 starts with `? help · q quit` and lists the other keys in order of importance. When the row
 is too narrow, whole items drop from the right; `? help` always stays. Press `?` to open a help overlay that lists every
 key of the current screen; press `?` or `escape` to close it. Each control on
@@ -180,7 +180,7 @@ input device. The dialog lists each PipeWire microphone by its description, and
 `Settings default`. A
 chosen device that is gone shows as `unavailable` and stays selected until you
 choose another row. The choice shows in the MIC meter and applies to the next
-recordings until the hub quits. It does not change `config.toml`; the Audio tab
+recordings until the hub quits. It does not change `config.toml`; the Microphone row
 of Settings edits the saved device.
 
 The transcript opens in mixed view, with one time-ordered stream and speaker
@@ -239,7 +239,7 @@ download. Speaker labels need an x86-64 CPU with AVX2 or an ARM64 CPU.
 ### Separate the speakers in a room
 
 When several people share one microphone, turn on microphone diarization:
-set `live.diarize_mic` (default `false`) on the Live tab of Settings. A new
+set `live.diarize_mic` (default `false`) with the Separate room speakers row of Settings. A new
 recording then labels microphone speakers `Room 1`, `Room 2`, and so on
 (speaker IDs `room-1`, `room-2`), apart from the system speakers (`Speaker 1`,
 ...). Microphone and system audio are separate speaker streams, so a room
@@ -458,17 +458,22 @@ not read, move, or delete them.
 
 ## Settings
 
-Settings has five tabs: General, Audio, Recognition, Live, and Checks. Press
-`left` and `right`, or click a tab, to change the tab. A `▶` marks the active
-tab. The first four tabs edit
-`config.toml`:
+Settings has two tabs: Settings and Checks. Press `left` and `right`, or click
+a tab, to change the tab. A `▶` marks the active tab. The Settings tab is one
+page that edits `config.toml` in six groups:
 
-| Tab | Settings |
+| Group | Settings |
 | --- | --- |
-| General | hotkey, sound and overlay feedback, log level, delivery, and analytics |
-| Audio | input device, maximum recording length, and spectrum floor |
-| Recognition | `asr.idle_unload_seconds`, `asr.cpu_threads`, and the refine settings |
-| Live | `live.diarize_mic` |
+| Keys | Agent key, General key, Cancel key, Hotkey mode |
+| Audio | Microphone, Volume, Sound pack, Overlay |
+| Text | Vocabulary, Copy original, Restore clipboard |
+| Refine | Refine, Host, Model |
+| Recording | Separate room speakers, Meter floor dBFS |
+| System | Usage history, Idle unload |
+
+A terminal of 120 columns or more shows the groups in two columns. A narrower
+terminal shows one column that scrolls; below 80 columns it has no empty line
+between groups.
 
 Each row shows a `●` slot, the setting name, and its control. See the
 [settings reference](#settings-reference) for what each setting does. A `▶`
@@ -485,18 +490,25 @@ marks the selected row. The controls are:
 
 While an input in a row has focus, letters go to the input. `enter` keeps the
 value, `escape` cancels it, `tab` keeps it and selects the next row, and
-`ctrl+s` keeps it and saves. When the config refuses a value, the input stays
-open and the row shows `× <reason>`, for example
-`× must be non-empty`.
+`ctrl+s` keeps it and saves.
 
 A `●` marks a row whose value differs from the saved file, not from the
-default. A row shows `default <value>` when its value differs from the default. The first row of the
-panel shows the config file, `● N unsaved changes`, and the newest
-`config.toml.bak-<time>` backup with its time. Below the rows, `[ctrl+s] Save N
-changes`, `[u] Undo`, `[D] Reset row`, and `Discard all` act on the draft;
-Discard all asks first. Click a row to select it, and click it again to edit
-it. Recognition holds the one shared set of ASR settings for dictation,
-Record, and file jobs. Model downloads are explicit. Run
+default. The tab row holds `[u] Undo`, `[D] Reset row`, `Discard all`, and
+`[ctrl+s] Save`; Discard all asks first. In a terminal of 120 columns or more,
+`N changes` follows Save. In a narrow terminal, Reset row and then Undo leave
+the tab row; their keys still act.
+
+The line under the tabs is the message line: `config.toml · ● N unsaved
+changes · <message>`. The message is one of these:
+
+- `× <setting> <reason>` while the config refuses a value, for example
+  `× Model must be non-empty`. The input stays open.
+- `default <value>` when the value of the selected row differs from its default.
+- The newest `config.toml.bak-<time>` backup and its time.
+
+Below 80 columns the line has no `config.toml · ` prefix. Click a row to
+select it, and click it again to edit it. Idle unload is the one shared ASR
+setting for dictation, Record, and file jobs. Model downloads are explicit. Run
 `stenographer model download --asr` to build the speech model; see
 [build the speech model](usage.md#build-the-speech-model).
 
@@ -517,7 +529,7 @@ unsaved change of Settings; `escape` cancels.
 | `space` | Flip the selected toggle. |
 | `u` | Undo the last edit. |
 | `shift+d` | Reset the selected setting to its default. |
-| `/` | Search setting names in every tab; `escape` clears the search. |
+| `/` | Search setting names; `escape` clears the search. |
 | `ctrl+s` | Save changes and keep a timestamped backup. |
 
 Settings apply to new sessions and jobs. Work that is already running keeps
@@ -528,32 +540,22 @@ its current settings.
 | Setting | Key | What it does |
 | --- | --- | --- |
 | Agent key | `hotkey.binding` | The dictation binding for agent-directed dictation and its cleanup. |
-| Hotkey device | `hotkey.device` | The hotkey input device. Blank listens on the keyboards that stenographer detects. |
 | Cancel key | `hotkey.cancel_binding` | The global cancel key of dictation. Blank disables it. |
 | Hotkey mode | `hotkey.mode` | The hotkey behavior: hold, toggle, or hybrid. |
-| Hold threshold | `hotkey.hybrid_threshold_seconds` | In hybrid mode, the press duration that separates a tap from a hold. |
 | General key | `hotkey.general_binding` | The dictation binding for ordinary transcript cleanup. |
-| Volume | `feedback.volume` | The playback volume of dictation feedback sounds. |
-| Mute sounds | `feedback.mute` | Mutes dictation feedback sounds. |
+| Volume | `feedback.volume` | The playback volume of dictation feedback sounds. `0` is silent. |
 | Overlay | `feedback.overlay` | Shows the best-effort status overlay of dictation. |
 | Sound pack | `feedback.sound_pack` | The name of the feedback sound pack. |
-| Log level | `feedback.log_level` | The minimum level of console log messages. |
 | Copy original | `delivery.copy_original` | For the Agent key, and only when cleanup changed the text, copies the original transcript too. |
 | Restore clipboard | `delivery.restore_clipboard` | Restores the previous clipboard item after dictation delivers its text. |
-| Restore delay | `delivery.restore_delay_ms` | The wait, in milliseconds, before the clipboard is restored. |
-| Usage history | `analytics.enabled` | Stores local numeric usage history of dictation and `stenographer transcribe`. No audio or transcript text is stored. |
-| Resource profiling | `analytics.resource_profiling` | With Usage history on, measures local resource use during utterances. |
+| Usage history | `analytics.enabled` | Stores local numeric usage history of dictation and `stenographer transcribe`, with local resource use during utterances. No audio or transcript text is stored. |
 | Microphone | `audio.input_device` | The PipeWire source name for dictation and Record; the picker lists each microphone by its description. Blank, `pipewire`, `default`, `pulse`, or a number uses the default microphone. Record's `d` key can choose another device for its next recording. |
-| Longest recording | `audio.max_recording_seconds` | The maximum length of one hotkey dictation. It does not limit Record. |
 | Meter floor dBFS | `feedback.spectrum_floor_dbfs` | The floor of the Record meters and the dictation overlay in dBFS: one fixed value, or one value per band. |
 | Idle unload | `asr.idle_unload_seconds` | The seconds before the idle speech worker unloads, and how long Ollama keeps the refine model loaded when idle. Zero never unloads either one. |
-| CPU threads | `asr.cpu_threads` | The CPU threads of the speech worker. Zero is automatic. |
 | Vocabulary | `refine.vocabulary` | Terms that refine spells exactly as written. |
 | Refine | `refine.enabled` | Runs text cleanup after each dictated utterance. File jobs and `stenographer transcribe --refine` choose it per run. Record does not use refine. |
 | Host | `refine.host` | The Ollama server of refine. A host that is not loopback receives transcript text. |
 | Model | `refine.model` | The model name on the refine service. |
-| Minimum words | `refine.min_words` | Shorter utterances skip refine. |
-| Structured output | `refine.structured_output` | Asks the model for structured output. |
 | Separate room speakers | `live.diarize_mic` | Separates the speakers on the microphone as Room 1, Room 2, and so on. Off labels every microphone line You. It applies to new Record recordings. |
 
 ### Checks
@@ -594,7 +596,7 @@ no transcript text.
 | `enter` | Narrow tier: show the detail of the selected check. |
 | `escape` | Narrow tier: return from the detail to the list. |
 | `r` | Run the checks again. |
-| `f` | Fix: open the related Settings tab and row, or the Quick setup or Models dialog. |
+| `f` | Fix: select the related Settings row, or open the Quick setup or Models dialog. |
 | `t` | Test the area of the selected check. |
 | `l` | Open the log. |
 | `c` | Copy the check report. |

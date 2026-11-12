@@ -67,7 +67,6 @@ class Worker:
         on_model_loading: Callable[[], None] | None = None,
         on_model_loading_finished: Callable[[], None] | None = None,
     ) -> None:
-        self._cfg = cfg
         self._on_model_loading = on_model_loading
         self._on_model_loading_finished = on_model_loading_finished
         self._idle_seconds = cfg.idle_unload_seconds
@@ -283,7 +282,7 @@ class Worker:
             )
         self._teardown()
         try:
-            self._process = self._transport.spawn(self._cfg, on_log=forward_worker_record)
+            self._process = self._transport.spawn(on_log=forward_worker_record)
         except Exception as exc:
             log_failure(log, logging.ERROR, "worker: spawn_failed", exc, safe=True)
             self._teardown()

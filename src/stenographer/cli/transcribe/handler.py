@@ -144,7 +144,7 @@ def cmd_transcribe(args: argparse.Namespace, cfg: Config) -> int:
         record.cold = True
         terminal = "model_failed"
         try:
-            m = model.Model(cfg.asr)
+            m = model.Model()
         finally:
             record.load_ms = (time.perf_counter() - load_started_at) * 1000
         terminal = "decode_failed"

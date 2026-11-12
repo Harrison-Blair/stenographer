@@ -331,13 +331,13 @@ def _build(tmp_path, monkeypatch, *, reader_available=True, **delivery):
     return Daemon.build(cfg, clipboard_backend="wl-copy", platform=platform), platform
 
 
-def test_build_enables_the_restore_with_the_configured_delay(tmp_path, monkeypatch, daemon_logs):
-    daemon, platform = _build(tmp_path, monkeypatch, restore_delay_ms=250)
+def test_build_enables_the_restore_with_the_fixed_delay(tmp_path, monkeypatch, daemon_logs):
+    daemon, platform = _build(tmp_path, monkeypatch)
     try:
         deliverer = daemon._deliverer
         assert deliverer._read == platform.read_clipboard
         assert deliverer._restore == platform.restore_clipboard
-        assert deliverer._restore_delay == 0.25
+        assert deliverer._restore_delay == 0.5
         assert daemon._pipeline._copy_original is True
     finally:
         daemon.stop()
