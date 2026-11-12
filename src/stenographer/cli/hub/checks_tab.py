@@ -59,6 +59,10 @@ _FIXES = {
     "overlay": ("overlay setting", "feedback.overlay"),
     "clipboard_restore": ("clipboard restore setting", "delivery.restore_clipboard"),
 }
+# The button rows of the detail, and the cells a button adds to its label in each row form.
+_BUTTON_ROWS = ("#checks-detail-buttons", "#checks-report-buttons", "#checks-dialog-buttons")
+_PADDED_CELLS = 5
+_TIGHT_GAP = 2
 # Each count of the summary has a slot of this width.
 _COUNT_SLOT = 2
 # The test of a check: its button text and the setup test area.
@@ -166,11 +170,6 @@ class ChecksTab(Vertical):
     Screen.-narrow ChecksTab.-detail #checks-detail { display: block; }
     Screen.-narrow ChecksTab.-detail #checks-list-column { display: none; }
     Screen.-narrow ChecksTab.-detail #checks-back { display: block; }
-    Screen.-medium ChecksTab #checks-detail-buttons,
-    Screen.-narrow ChecksTab #checks-detail-buttons {
-        layout: vertical;
-        height: auto;
-    }
     """
 
     def __init__(
@@ -198,6 +197,7 @@ class ChecksTab(Vertical):
         self.index = 0
         self._test_statuses: dict[str, str] = {}
         self._view_key = None
+        self._row_forms: dict[str, str] = {}
         self.detail_open = False
 
     @property
@@ -321,6 +321,7 @@ class ChecksTab(Vertical):
     def refresh_view(self) -> None:
         if not self.is_mounted:
             return
+        self.call_after_refresh(self._fit_rows)
         summary = self.query_one("#checks-summary", Static)
         width = summary.content_size.width
         key = (
@@ -335,7 +336,6 @@ class ChecksTab(Vertical):
         if key == self._view_key:
             return
         self._refresh_checks()
-        self._fit_dialog_buttons()
         # The narrow detail shows the counts only; the list adds the time when it fits whole.
         text = self.summary_text()
         if (self.narrow and self.detail_open) or (width and text.cell_len > width):
@@ -401,15 +401,37 @@ class ChecksTab(Vertical):
             text.append(UNREADABLE_LOG, style=StatusToken.TONES["dim"])
         return text
 
-    def _fit_dialog_buttons(self) -> None:
-        """Keep Quick setup, Models and Defaults on one row: below the wide tier they lose
-        their padding. Inline: the app rules of HubButton outrank this default CSS."""
-        compact = self._tier() != "wide"
-        for button in self.query("#checks-dialog-buttons HubButton").results(HubButton):
-            button.styles.padding = 0 if compact else None
-            button.styles.line_pad = 0 if compact else None
-            button.styles.width = button.label.cell_length if compact else None
-            button.styles.margin = (0, 2, 0, 0) if compact else None
+    def _fit_rows(self) -> None:
+        """Give each button row the widest form that fits its width.
+
+        ``padded`` is the usual button row; ``tight`` drops the padding; ``stack`` puts one
+        button on each line. Inline styles: the app rules of HubButton outrank this CSS.
+        """
+        for row_id in _BUTTON_ROWS:
+            row = self.query_one(row_id)
+            width = row.content_size.width
+            buttons = [button for button in row.query(HubButton).results(HubButton)]
+            labels = [button.label.cell_length for button in buttons if button.display]
+            if not width or not labels:
+                continue
+            if sum(labels) + _PADDED_CELLS * len(labels) <= width:
+                form = "padded"
+            elif sum(labels) + _TIGHT_GAP * len(labels) <= width:
+                form = "tight"
+            else:
+                form = "stack"
+            if self._row_forms.get(row_id) == form:
+                continue
+            self._row_forms[row_id] = form
+            stack = form == "stack"
+            row.styles.layout = "vertical" if stack else "horizontal"
+            row.styles.height = "auto" if stack else 1
+            for button in buttons:
+                padded = form == "padded"
+                button.styles.padding = None if padded else 0
+                button.styles.line_pad = None if padded else 0
+                button.styles.width = None if padded else button.label.cell_length
+                button.styles.margin = None if padded else (0, _TIGHT_GAP, 0, 0)
 
     def _tier(self) -> str:
         return tier_for(self.app.size.width)
@@ -498,6 +520,9 @@ class ChecksTab(Vertical):
             fmt_event("hub", "doctor_check_selected", check=self.report.checks[index].check_id)
         )
         self.app.refresh_view()
+
+    def on_resize(self) -> None:
+        self.call_after_refresh(self._fit_rows)
 
     def on_row_selected(self, event: RowSelected) -> None:
         if event.control.id in {f"checks-{group}" for group in CHECK_GROUPS}:

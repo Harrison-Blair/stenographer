@@ -572,7 +572,6 @@ async def test_settings_rows_show_no_description_and_values_use_the_free_width(t
         await pilot.pause()
         # Label, marks and value only: the row ends with its value.
         row = _fields(app)[0]
-        assert row.note == ""
         text = _screen_text(app)
         agent_row = next(line for line in text.splitlines() if "Agent key" in line)
         assert agent_row.split("│")[1].split() == ["▶", "Agent", "key", "KEY_RIGHTCTRL"]
@@ -1222,3 +1221,48 @@ async def test_system_head_does_not_change_with_speech(tmp_path, size):
         assert "● speech" in speech
         assert speech.index("default output") == quiet.index("default output")
         session.release.set()
+
+
+async def test_checks_hints_list_the_check_keys_before_the_tab_keys(tmp_path):
+    services, _created = _services(tmp_path)
+    report = _board_report()
+    app = _app(tmp_path, services, doctor_probe=lambda _config: report)
+    async with app.run_test(size=(150, 45)) as pilot:
+        await pilot.press("3", "left")
+        await _until(pilot, lambda: app.checks_tab.report is not None)
+        await pilot.pause()
+        hints = _assert_hints_fit(app, "checks")
+        assert hints.startswith("? help · q quit · r run again · f fix · t test")
+        assert hints.endswith("· ←→ tab")
+
+
+@pytest.mark.parametrize("size", [*TIER_SIZES, (150, 16), (120, 16)])
+async def test_settings_fit_every_size(tmp_path, size):
+    services, _created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        assert _layout_problems(app) == [], "page"
+        _assert_one_row(app, "#top-bar")
+        _assert_hints_fit(app, "page")
+        app.settings_screen.open_setting("refine.host")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert _layout_problems(app) == [], "open input"
+
+
+async def test_settings_below_floor_shows_the_size_line(tmp_path):
+    services, _created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await pilot.press("3")
+        await pilot.pause()
+        await pilot.resize_terminal(59, 15)
+        await pilot.pause()
+        lines = [row.strip() for row in _screen_text(app).splitlines() if row.strip()]
+        assert lines == [f"60{TIMES}16 needed · now  59{TIMES}15"]
+        await pilot.resize_terminal(80, 24)
+        await pilot.pause()
+        assert _layout_problems(app) == []

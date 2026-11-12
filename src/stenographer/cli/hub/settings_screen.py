@@ -75,18 +75,6 @@ _DEFAULT_DEVICE = {"audio.input_device": "Default input"}
 # Fixed slots: the unsaved count of the message line and the count beside Save.
 _UNSAVED_SLOT = 20
 _COUNT_SLOT = 10
-_WIDE_COLUMNS = 120
-_MEDIUM_COLUMNS = 80
-
-
-def settings_tier(width: int) -> str:
-    """Return ``wide``, ``medium`` or ``narrow`` for a terminal width.
-
-    The hub tier classes replace this once they exist.
-    """
-    if width >= _WIDE_COLUMNS:
-        return "wide"
-    return "medium" if width >= _MEDIUM_COLUMNS else "narrow"
 
 
 def _count_text(count: int) -> str:
@@ -245,14 +233,6 @@ class SettingsScreen(HubScreen):
         if editor.shown_keys is None:
             editor.show_keys(SETTINGS_KEYS)
         self._sync_tab_widgets()
-
-    @property
-    def tier(self) -> str:
-        return settings_tier(self.app.size.width)
-
-    def on_resize(self) -> None:
-        if self.ready:
-            self.app.refresh_view()
 
     def select_tab(self, tab: str) -> None:
         """Show one tab; unsaved changes stay."""
@@ -522,7 +502,7 @@ class SettingsScreen(HubScreen):
         if self.typing:
             return (("enter", "keep"), ("esc", "cancel"), ("tab", "next row"), ("ctrl+s", "save"))
         if self.tab == "checks":
-            return (("←→", "tab"), *self.checks_tab.footer_hints())
+            return (*self.checks_tab.footer_hints(), ("←→", "tab"))
         return (
             ("enter", "edit"),
             ("space", "toggle"),

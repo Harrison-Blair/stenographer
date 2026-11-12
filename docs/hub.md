@@ -580,7 +580,8 @@ selected check with its state word, the result, fix guidance when available,
 `checked HH:MM` and the related path when one applies, and the buttons
 `[f] Fix: …` (for a warning or failure that has a fix), `[t] Test: …` (when
 the area has a test), `[l] Open log`, and `[c] Copy report`. The detail scrolls when it does not fit;
-`[Q] Quick setup…`, `[m] Models…`, and `[D] Defaults…` stay on its last row.
+`[Q] Quick setup…`, `[m] Models…`, and `[D] Defaults…` stay at its bottom. A row of
+buttons that does not fit on one line shows one button on each line.
 
 The first row of the tab shows `N pass · N warn · N fail`, the time of the last
 run, and `[r] Run again` (not in the narrow tier; `r` still runs the checks). The Settings navigation badge shows `NW` for warnings or `NF` for
