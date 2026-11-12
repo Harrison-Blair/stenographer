@@ -189,10 +189,6 @@ the only model measured that never did. It holds about 1.7 GB of VRAM (the
 speech model runs on the CPU) and takes roughly 2 seconds for a short
 utterance and 5 seconds for a long one once warm.
 
-The benchmark's second choice, `qwen3.5:4b`, needs a JSON reply schema to keep
-its paragraph breaks. Refine asks every model for plain text, so that model is
-no longer verified.
-
 Any model your Ollama has will be used if you name it, but quality is verified
 only for the default. Models are not interchangeable here in the way they usually
 are: the benchmark rejected candidates for injecting punctuation into digit

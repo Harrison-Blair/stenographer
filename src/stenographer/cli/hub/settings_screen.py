@@ -373,6 +373,10 @@ class SettingsScreen(HubScreen):
         if signature == self._row_signature:
             return
         self._row_signature = signature
+        reopen = None
+        if self.editing is not None and self.editing in editor.visible_keys:
+            typed = self.query_one("#config-input", Input)
+            reopen = (self.editing, typed.value, typed.cursor_position, self.row_error)
         self._close_input()
         container = self.query_one("#config-rows", VerticalScroll)
         container.remove_children()
@@ -407,6 +411,15 @@ class SettingsScreen(HubScreen):
             )
         else:
             container.mount_all(self._spaced(groups, spaced=tier == "medium"))
+        if reopen is not None:
+            self.call_after_refresh(self._reopen_input, editor, *reopen)
+
+    def _reopen_input(
+        self, editor: ConfigEditor, key: str, text: str, cursor: int, error: tuple[str, str] | None
+    ) -> None:
+        """Put back an input that a row rebuild closed, with its typed text and refusal."""
+        self.row_error = error
+        self.run_worker(self._open_input(editor, key, text=text, cursor=cursor))
 
     @staticmethod
     def _spaced(groups: list[tuple[int, list[Static]]], *, spaced: bool) -> list[Static]:
@@ -448,7 +461,7 @@ class SettingsScreen(HubScreen):
             return Text(f"[enter] Edit list… {terms}", style=style or "#5fd7ff")
         text = self._value_text(editor, key, value)
         if kind in {"choice", "device"}:
-            return Text(f"{text} ▾", style=style)
+            text = f"{text} ▾"
         return Text(text, style=style, no_wrap=True, overflow="ellipsis")
 
     def _value_text(self, editor: ConfigEditor, key: str, value: object) -> str:
@@ -517,7 +530,7 @@ class SettingsScreen(HubScreen):
 
     # Device lists
 
-    def list_devices(self, _dotted_key: str) -> list[tuple[str, str]]:
+    def list_devices(self) -> list[tuple[str, str]]:
         """Return ``(value, label)`` of each microphone the sound server lists."""
         return self.app.services.input_devices()
 
@@ -584,7 +597,7 @@ class SettingsScreen(HubScreen):
         )
 
     async def _open_devices(self, editor: ConfigEditor, key: str) -> None:
-        devices = list(await asyncio.to_thread(self.list_devices, key))
+        devices = list(await asyncio.to_thread(self.list_devices))
         # The user may have moved on during the enumeration; a late dialog would edit a hidden row.
         if self.app.screen is not self or editor.selected_key != key:
             return
@@ -623,12 +636,16 @@ class SettingsScreen(HubScreen):
         """Return the words of a rejection for the ``\N{MULTIPLICATION SIGN}`` line of its row."""
         return exc.reason if isinstance(exc, ConfigError) else str(exc)
 
-    async def _open_input(self, editor: ConfigEditor, key: str) -> None:
+    async def _open_input(
+        self, editor: ConfigEditor, key: str, *, text: str | None = None, cursor: int | None = None
+    ) -> None:
         field = self._rows.get(key)
         if field is None:
             return
         value = editor.value(key)
-        if value is None:
+        if text is not None:
+            initial = text
+        elif value is None:
             initial = ""
         elif isinstance(value, tuple):
             initial = ", ".join(map(str, value))
@@ -647,7 +664,7 @@ class SettingsScreen(HubScreen):
         self.app.refresh_view()
         await field.mount(editor_input)
         editor_input.focus()
-        editor_input.cursor_position = len(initial)
+        editor_input.cursor_position = len(initial) if cursor is None else cursor
 
     def _close_input(self) -> None:
         self.editing = None

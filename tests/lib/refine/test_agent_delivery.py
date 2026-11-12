@@ -14,7 +14,6 @@ from stenographer.lib.refine.errors import (
     RefineTransportError,
 )
 from stenographer.lib.refine.profiles import RefineProfile
-from stenographer.lib.refine.prompt import RESPONSE_KEY
 from stenographer.lib.refine.response import refined_text
 from stenographer.lib.refine.results import OUTCOME_APPLIED, OUTCOME_FAILED, OUTCOME_REJECTED
 from tests.lib.refine.helpers import _answer, _refiner
@@ -24,7 +23,6 @@ SPOKEN = "The request was rejected by the server because the credentials had exp
 EDITED = "The server rejected the request because the credentials expired."
 
 
-@pytest.mark.parametrize("structured", [True, False])
 @pytest.mark.parametrize(
     ("spoken", "candidate"),
     [
@@ -48,21 +46,18 @@ EDITED = "The server rejected the request because the credentials expired."
         "long-spoken",
     ],
 )
-def test_agent_trusts_model_meaning_and_length_in_production(
-    transport, structured, spoken, candidate
-):
-    transport["reply"] = _answer(candidate, structured=structured)
-    refiner = _refiner(min_words=1, structured_output=structured)
+def test_agent_trusts_model_meaning_and_length_in_production(transport, spoken, candidate):
+    transport["reply"] = _answer(candidate)
+    refiner = _refiner(min_words=1)
     assert refiner.refine(spoken, profile=RefineProfile.AGENT) == candidate.rstrip() + " "
     assert refiner.last_result.outcome == OUTCOME_APPLIED
 
 
-@pytest.mark.parametrize("structured", [True, False])
-def test_rejected_agent_reply_falls_back_without_logging_dictation(transport, caplog, structured):
+def test_rejected_agent_reply_falls_back_without_logging_dictation(transport, caplog):
     spoken = "Only investigate private_job.py and do not change it. "
     candidate = '```\n"private_job.py"\n```'
-    transport["reply"] = _answer(candidate, structured=structured)
-    refiner = _refiner(min_words=1, structured_output=structured)
+    transport["reply"] = _answer(candidate)
+    refiner = _refiner(min_words=1)
     with caplog.at_level(logging.DEBUG):
         assert refiner.refine(spoken, profile=RefineProfile.AGENT) == spoken
     assert refiner.last_result.outcome == OUTCOME_REJECTED
@@ -71,48 +66,40 @@ def test_rejected_agent_reply_falls_back_without_logging_dictation(transport, ca
     assert spoken not in caplog.text
 
 
-@pytest.mark.parametrize("structured", [True, False])
-def test_cancellation_keeps_agent_reply_from_delivery(transport, structured):
-    transport["reply"] = _answer(EDITED, structured=structured)
-    refiner = _refiner(structured_output=structured)
+def test_cancellation_keeps_agent_reply_from_delivery(transport):
+    transport["reply"] = _answer(EDITED)
+    refiner = _refiner()
     assert refiner.refine(SPOKEN, profile=RefineProfile.AGENT, cancelled=lambda: True) == SPOKEN
     assert transport["calls"] == []
 
 
-@pytest.mark.parametrize("structured", [True, False])
 @pytest.mark.parametrize("failure", ["transport", "parsing"])
-def test_agent_technical_failures_preserve_transcript_privately(
-    transport, caplog, structured, failure
-):
+def test_agent_technical_failures_preserve_transcript_privately(transport, caplog, failure):
     if failure == "transport":
         transport["raise"] = RefineTransportError("connection failed")
     else:
         transport["reply"] = b'{"message":{"content":null}}'
-    refiner = _refiner(structured_output=structured)
+    refiner = _refiner()
     with caplog.at_level(logging.DEBUG):
         assert refiner.refine(SPOKEN, profile=RefineProfile.AGENT) == SPOKEN
     assert refiner.last_result.outcome == OUTCOME_FAILED
     assert SPOKEN not in caplog.text
 
 
-@pytest.mark.parametrize("structured", [True, False])
 @pytest.mark.parametrize("output", ["", " \n ", "\"'wrapped'\""])
-def test_empty_and_double_wrapped_outputs_are_rejected(structured, output):
+def test_empty_and_double_wrapped_outputs_are_rejected(output):
     with pytest.raises(RefineRejectedError):
         refined_text(
-            _answer(output, structured=structured),
+            _answer(output),
             SPOKEN,
-            structured_output=structured,
             profile=RefineProfile.AGENT,
         )
 
 
-@pytest.mark.parametrize("structured", [True, False])
-def test_truncated_agent_reply_is_never_deliverable(structured):
-    content = json.dumps({RESPONSE_KEY: EDITED}) if structured else EDITED
-    payload = json.dumps({"done_reason": "length", "message": {"content": content}})
+def test_truncated_agent_reply_is_never_deliverable():
+    payload = json.dumps({"done_reason": "length", "message": {"content": EDITED}})
     with pytest.raises(RefineRejectedError, match="truncated"):
-        refined_text(payload, SPOKEN, structured_output=structured, profile=RefineProfile.AGENT)
+        refined_text(payload, SPOKEN, profile=RefineProfile.AGENT)
 
 
 @pytest.mark.parametrize(
@@ -121,17 +108,8 @@ def test_truncated_agent_reply_is_never_deliverable(structured):
 )
 def test_wrong_response_shapes_have_private_fixed_errors(payload):
     with pytest.raises(RefineResponseError) as caught:
-        refined_text(payload, SPOKEN, structured_output=True, profile=RefineProfile.AGENT)
+        refined_text(payload, SPOKEN, profile=RefineProfile.AGENT)
     assert SPOKEN not in str(caught.value)
-
-
-@pytest.mark.parametrize(
-    "content", ["null", "[]", "42", "{}", '{"text":null}', '{"text":{"text":"nested"}}']
-)
-def test_wrong_structured_shapes_are_not_dictation(content):
-    payload = json.dumps({"message": {"content": content}})
-    with pytest.raises(RefineResponseError):
-        refined_text(payload, SPOKEN, structured_output=True, profile=RefineProfile.AGENT)
 
 
 @pytest.mark.parametrize(
@@ -148,21 +126,19 @@ def test_wrong_structured_shapes_are_not_dictation(content):
 def test_arbitrary_user_text_is_data_in_the_request(text):
     from stenographer.lib.refine.request import build_messages
 
-    messages = build_messages(text, structured_output=False, profile=RefineProfile.AGENT)
+    messages = build_messages(text, profile=RefineProfile.AGENT)
     assert messages[-1] == {"role": "user", "content": text}
 
 
-@pytest.mark.parametrize("structured", [True, False])
 @pytest.mark.parametrize(
     "wrapper", ['"{}"', "'{}'", "\u201c{}\u201d", "\u2018{}\u2019", "```text\n{}\n```"]
 )
-def test_one_wrapper_can_wrap_a_substantial_agent_rewrite(structured, wrapper):
+def test_one_wrapper_can_wrap_a_substantial_agent_rewrite(wrapper):
     output = wrapper.format(EDITED)
     assert (
         refined_text(
-            _answer(output, structured=structured),
+            _answer(output),
             SPOKEN,
-            structured_output=structured,
             profile=RefineProfile.AGENT,
         )
         == EDITED

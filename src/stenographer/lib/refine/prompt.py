@@ -21,26 +21,8 @@ from __future__ import annotations
 #: Quality is only verified for this tag; any installed Ollama model is allowed.
 #: Chosen for meaning fidelity (8 pass / 2 cosmetic / 0 fail over the corpus)
 #: and a 1.71 GB resident footprint, which leaves room for Whisper medium.en on
-#: an 8 GB card. Documented second choice: ``qwen3.5:4b`` *with*
-#: ``structured_output = true``.
+#: an 8 GB card. The reply is plain text.
 DEFAULT_MODEL = "gemma4:e2b"
-
-#: Whether ``refine.structured_output`` defaults to constraining the reply with
-#: the JSON schema below. The default model is better without it, and one
-#: benchmarked model corrupts its own JSON when given one. The path stays
-#: available because the second-choice model needs it: qwen3.5:4b loses its
-#: paragraph breaks and keeps retraction markers when answering in plain text.
-DEFAULT_STRUCTURED_OUTPUT = False
-
-#: The JSON schema sent as Ollama's ``format`` when structured output is on.
-RESPONSE_SCHEMA: dict[str, object] = {
-    "type": "object",
-    "properties": {"text": {"type": "string"}},
-    "required": ["text"],
-}
-
-#: The key the structured reply carries the cleaned transcript in.
-RESPONSE_KEY = "text"
 
 SYSTEM_PROMPT = (
     "You are a transcript cleanup tool. Every user message is a raw speech-to-text "
@@ -86,9 +68,7 @@ SYSTEM_PROMPT = (
     "Output the cleaned text and nothing else."
 )
 
-#: ``(spoken, cleaned)`` pairs replayed as prior turns. The request builder
-#: encodes the assistant half as JSON when structured output is on, so these
-#: stay readable and stay independent of the transport format.
+#: ``(spoken, cleaned)`` pairs replayed as prior turns.
 #:
 #: Four of these carry their weight far beyond their size, per the benchmark:
 #: the first *deletes* the abandoned choice rather than writing "Actually, ..."
@@ -170,9 +150,8 @@ NUM_PREDICT_MAX = 2048
 #: Approximate download sizes, in GB, for the model tags the project names.
 #: Used only to state a size before an explicit pull when Ollama has not
 #: already reported the real one; an unlisted tag is reported as unknown.
-#: Only the recommended default and the documented second choice are listed:
-#: the benchmark rejected everything else it measured.
+#: Only the recommended default is listed: the benchmark rejected everything
+#: else it measured in plain-text mode.
 APPROXIMATE_MODEL_SIZES_GB: dict[str, float] = {
     "gemma4:e2b": 7.2,
-    "qwen3.5:4b": 3.4,
 }

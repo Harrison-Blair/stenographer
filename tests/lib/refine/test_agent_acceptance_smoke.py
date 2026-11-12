@@ -18,7 +18,6 @@ import pytest
 from stenographer.lib.config.models import Config
 from stenographer.lib.refine.ollama_refiner import OllamaRefiner
 from stenographer.lib.refine.profiles import RefineProfile
-from stenographer.lib.refine.prompt import DEFAULT_STRUCTURED_OUTPUT
 from stenographer.lib.refine.results import OUTCOME_APPLIED
 from tests.lib.refine.helpers import installed_refiner as installed_refiner
 
@@ -48,7 +47,6 @@ def refiner(installed_refiner):
         host=config.refine.host,
         model=config.refine.model,
         keep_alive=(-1 if config.asr.idle_unload_seconds <= 0 else config.asr.idle_unload_seconds),
-        structured_output=DEFAULT_STRUCTURED_OUTPUT,
         min_words=1,
     )
 

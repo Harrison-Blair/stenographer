@@ -6,7 +6,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from stenographer.lib.refine.ollama_refiner import OllamaRefiner
-from stenographer.lib.refine.prompt import DEFAULT_STRUCTURED_OUTPUT
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -39,7 +38,6 @@ def build_refiner(
         host=cfg.host,
         model=cfg.model,
         min_words=MIN_WORDS,
-        structured_output=DEFAULT_STRUCTURED_OUTPUT,
         keep_alive=-1 if idle_unload_seconds <= 0 else int(idle_unload_seconds),
         vocabulary=cfg.vocabulary,
         on_model_loading=on_model_loading,

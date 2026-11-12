@@ -10,7 +10,6 @@ from stenographer.lib.refine import ollama_refiner
 from stenographer.lib.refine.client import installed_model_names
 from stenographer.lib.refine.factory import MIN_WORDS
 from stenographer.lib.refine.ollama_refiner import OllamaRefiner
-from stenographer.lib.refine.prompt import DEFAULT_STRUCTURED_OUTPUT, RESPONSE_KEY
 
 SPOKEN = "um i think we should ship it on thursday no wait friday okay "
 CLEANED = "I think we should ship it on Friday. "
@@ -21,16 +20,14 @@ def _refiner(**overrides) -> OllamaRefiner:
         "host": "http://127.0.0.1:11434",
         "model": "test-model",
         "min_words": 10,
-        "structured_output": True,
         "keep_alive": 900,
     }
     kwargs.update(overrides)
     return OllamaRefiner(**kwargs)
 
 
-def _answer(text: str, *, structured: bool = True) -> bytes:
-    content = json.dumps({RESPONSE_KEY: text}) if structured else text
-    return json.dumps({"message": {"content": content}}).encode()
+def _answer(text: str) -> bytes:
+    return json.dumps({"message": {"content": text}}).encode()
 
 
 @pytest.fixture
@@ -82,7 +79,6 @@ def installed_refiner() -> OllamaRefiner:
         host=section.host,
         model=section.model,
         min_words=MIN_WORDS,
-        structured_output=DEFAULT_STRUCTURED_OUTPUT,
         keep_alive=Config.defaults().asr.idle_unload_seconds,
     )
     if not built.warm():

@@ -32,7 +32,7 @@ class IdleServices:
 
 def _app(tmp_path, content=None, devices=None):
     app = HubApp(IdleServices(), config_editor=ConfigEditor(_config_path(tmp_path, content)))
-    app.settings_screen.list_devices = lambda _key: list(devices or ())
+    app.settings_screen.list_devices = lambda: list(devices or ())
     return app
 
 
@@ -377,7 +377,7 @@ def test_settings_device_row_stays_responsive_and_opens_one_list_for_a_slow_enum
     release = threading.Event()
     released = []
 
-    def slow_devices(_key):
+    def slow_devices():
         released.append(release.wait(2))
         return [("3", "3: USB microphone")]
 
@@ -410,7 +410,7 @@ def test_settings_device_row_stays_responsive_and_opens_one_list_for_a_slow_enum
 def test_settings_device_list_does_not_open_after_the_user_leaves_the_row(tmp_path, leave_with):
     release = threading.Event()
 
-    def slow_devices(_key):
+    def slow_devices():
         release.wait(5)
         return [("3", "3: USB microphone")]
 

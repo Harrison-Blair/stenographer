@@ -14,7 +14,7 @@ import pytest
 from stenographer.lib.config.models import Config
 from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
-from stenographer.lib.daemon.daemon import MAX_RECORDING_SECONDS, Daemon
+from stenographer.lib.daemon.daemon import Daemon
 from stenographer.lib.refine.cancellation import never_cancelled
 from stenographer.lib.transcribe.errors import WorkerError
 from stenographer.lib.transcribe.results import TranscriptionResult
@@ -322,7 +322,7 @@ def test_a_hybrid_hold_stops_on_release(daemon_logs):
 def test_only_a_latched_hybrid_recording_arms_the_max_duration_timer():
     # The cap runs from the PRESS in every mode, so the latch arms the timer for
     # what is left of the window. Seen to FAIL against arming at the press, not
-    # arming at all, and arming for a flat MAX_RECORDING_SECONDS.
+    # arming at all, and arming for a flat 600 seconds (the fixed cap).
     daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0), mode="hybrid")
     try:
         daemon.on_toggle_press()
@@ -332,7 +332,7 @@ def test_only_a_latched_hybrid_recording_arms_the_max_duration_timer():
         daemon.on_hybrid_release()
         assert daemon._recording is True
         assert daemon._max_timer is not None
-        assert daemon._max_timer.interval == pytest.approx(MAX_RECORDING_SECONDS - 0.3, abs=0.05)
+        assert daemon._max_timer.interval == pytest.approx(600 - 0.3, abs=0.05)
 
         daemon._on_max_duration(daemon._utterance_id)
         assert daemon._recording is False

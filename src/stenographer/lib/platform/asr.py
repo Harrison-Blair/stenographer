@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import replace
-from typing import TYPE_CHECKING
 
 from stenographer.lib.logging.pipeline import (
     fmt_event,
@@ -12,16 +11,13 @@ from stenographer.lib.logging.pipeline import (
     set_utterance,
 )
 
-if TYPE_CHECKING:
-    from stenographer.lib.config.models import AsrConfig
-
 log = logging.getLogger(__name__)
 
 
 _JOIN_SECONDS = 2.0
 
 
-def _child_main(cfg: AsrConfig, request_q, response_q, log_q, log_level: int) -> None:
+def _child_main(request_q, response_q, log_q, log_level: int) -> None:
     """Spawn entry (module-level, picklable). Load and decode one request at a
     time, staying healthy after a caught error. The model is built lazily on the
     first load request so the child inherits the local-cache-only load."""
@@ -41,7 +37,7 @@ def _child_main(cfg: AsrConfig, request_q, response_q, log_q, log_level: int) ->
         set_utterance(message[-1])
         if message[0] == "load":
             try:
-                model = Model(cfg)
+                model = Model()
             except Exception as exc:
                 # A model-load failure names paths and library complaints, not
                 # anything derived from audio: its text may be rendered.

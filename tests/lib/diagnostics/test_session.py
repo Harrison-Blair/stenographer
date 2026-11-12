@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import dataclasses
+import time
 from importlib.metadata import version
 
 from stenographer.lib.analytics.store import Store
@@ -50,15 +51,21 @@ def test_an_enabled_session_records_the_host_context_it_was_given(tmp_path):
 
 def test_an_enabled_session_samples_resources(tmp_path):
     """Resource profiling follows Usage history; it has no setting of its own."""
-    host = _Host(tmp_path)
+    host = _Host(tmp_path, resident_bytes=4096)
     collection = create_session(_configured(), host, pids=lambda: (4242,))
     try:
-        collection.finish(collection.start(1), "success")
+        identity = collection.start(1)
+        deadline = time.monotonic() + 5.0
+        while not host.probed and time.monotonic() < deadline:
+            time.sleep(0.01)
+        collection.finish(identity, "success")
     finally:
         assert collection.close()
 
+    assert (4242,) in host.probed
     (record,) = Store(tmp_path / "analytics.sqlite3").records()
-    assert "resource_samples" in record["metrics"]
+    assert record["metrics"]["resource_samples"] >= 1
+    assert record["metrics"]["app_rss_bytes_max"] == 4096
 
 
 def test_a_host_that_cannot_describe_itself_degrades_instead_of_failing(tmp_path):

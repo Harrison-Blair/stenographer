@@ -317,7 +317,7 @@ async def test_shell_settings_tab_keys_reach_the_active_tab(tmp_path, setting, k
         config_editor=ConfigEditor(_config_path(tmp_path)),
         doctor_probe=lambda _config: probes.append("probe") or _report("ok"),
     )
-    app.settings_screen.list_devices = lambda _key: []
+    app.settings_screen.list_devices = lambda: []
     async with app.run_test(size=(150, 45)) as pilot:
         await pilot.press("3")
         if setting is None:

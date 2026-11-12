@@ -18,8 +18,6 @@ if TYPE_CHECKING:
 
     import numpy as np
 
-    from stenographer.lib.config.models import AsrConfig
-
 from stenographer.lib.transcribe.decode import (
     _assemble,
     decode_segments,
@@ -39,7 +37,6 @@ _PAD_SECONDS = 0.25
 class Model:
     def __init__(
         self,
-        cfg: AsrConfig,
         *,
         recognizer: object | None = None,
         data_dir: Path | None = None,

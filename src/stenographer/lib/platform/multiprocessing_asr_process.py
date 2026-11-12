@@ -37,7 +37,7 @@ class MultiprocessingAsrProcess:
             self._drain_logs = start_worker_log_relay(self._log_q, on_log=on_log)
             self._process = ctx.Process(
                 target=_child_main,
-                args=(config, self._request_q, self._response_q, self._log_q, logging.DEBUG),
+                args=(self._request_q, self._response_q, self._log_q, logging.DEBUG),
                 daemon=True,
             )
             self._process.start()

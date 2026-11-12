@@ -37,7 +37,7 @@ class IdleServices:
 
 def _app(tmp_path, content=None):
     app = HubApp(IdleServices(), config_editor=ConfigEditor(_config_path(tmp_path, content)))
-    app.settings_screen.list_devices = lambda _key: []
+    app.settings_screen.list_devices = lambda: []
     return app
 
 
@@ -171,12 +171,22 @@ async def test_message_line_shows_a_refused_input_and_the_row_does_not(tmp_path)
 
 
 def _layout_problems(app) -> list[str]:
-    """Each shown widget outside the screen or its parent, each overlap, each cut label."""
+    """Each shown widget outside the screen or its parent, each overlap, each cut label.
+
+    A widget inside a scroll container may leave its parent vertically (it scrolls);
+    it must still stay inside it horizontally and must not overlap another widget.
+    """
     screen = app.screen
     problems = []
     shown = []
     for widget in screen.query("*"):
-        region = widget.region
+        region = full = widget.region
+        scroll = next(
+            (node for node in widget.ancestors if isinstance(node, ScrollableContainer)), None
+        )
+        if scroll is not None:
+            # Only the part inside the scroll view is on screen.
+            region = region.intersection(scroll.content_region)
         if not widget.display or not region.area:
             continue
         name = widget.id or type(widget).__name__
@@ -184,14 +194,18 @@ def _layout_problems(app) -> list[str]:
             problems.append(f"{name} cuts its label: {widget.label}")
         if isinstance(widget, Button) and widget.label.cell_length > widget.content_size.width:
             problems.append(f"{name} cuts its label: {widget.label}")
-        if any(isinstance(node, ScrollableContainer) for node in widget.ancestors):
-            continue
+        shown.append((widget, region))
         if not screen.region.contains_region(region):
             problems.append(f"{name} leaves the screen: {region}")
         parent = widget.parent
-        if parent is not screen and not parent.content_region.contains_region(region):
+        if parent is screen:
+            continue
+        inside = parent.content_region
+        if scroll is not None:
+            if full.x < inside.x or full.right > inside.right:
+                problems.append(f"{name} leaves {parent.id} sideways: {full}")
+        elif not inside.contains_region(region):
             problems.append(f"{name} leaves {parent.id}: {region}")
-        shown.append((widget, region))
     for index, (widget, region) in enumerate(shown):
         for other, other_region in shown[index + 1 :]:
             related = widget in other.ancestors or other in widget.ancestors
@@ -214,3 +228,40 @@ async def test_settings_page_has_no_cut_or_overlapping_widget(tmp_path, size):
         await pilot.press("enter")
         await pilot.pause()
         assert _layout_problems(app) == []
+
+
+async def test_an_open_input_keeps_its_text_when_the_width_tier_changes(tmp_path):
+    app = _app(tmp_path)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _open(pilot)
+        app.settings_screen.open_setting("refine.model")
+        await pilot.pause()
+        await pilot.press("enter", "ctrl+a", "ctrl+k", *"new-model")
+        await pilot.pause()
+        await pilot.resize_terminal(100, 30)
+        await pilot.pause()
+        await pilot.pause()
+        focused = app.screen.focused
+        assert isinstance(focused, Input)
+        assert focused.value == "new-model"
+        assert app.settings_screen.editing == "refine.model"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.config_editor.config.refine.model == "new-model"
+
+
+LONG_SOURCE = "alsa_input.pci-0000_00_1f.3.analog-stereo"
+
+
+@pytest.mark.parametrize("size", [(120, 35), (60, 16)])
+async def test_a_long_microphone_name_stays_on_one_row(tmp_path, size):
+    content = default_toml().replace('input_device = ""', f'input_device = "{LONG_SOURCE}"', 1)
+    app = _app(tmp_path, content)
+    async with app.run_test(size=size) as pilot:
+        await _open(pilot)
+        app.settings_screen.open_setting("audio.input_device")
+        await pilot.pause()
+        rows = {field.label: field for field in _fields(app)}
+        microphone, volume = rows["Microphone"], rows["Volume"]
+        assert microphone.virtual_region.height == 1
+        assert volume.virtual_region.y == microphone.virtual_region.y + 1

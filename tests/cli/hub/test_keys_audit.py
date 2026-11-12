@@ -138,7 +138,7 @@ def _make_app(kind: str, tmp_path: Path) -> HubApp:
         model_status=lambda: (ModelEntry("alpha", "speech model", "alpha", False, "1 MB"),),
         setup_test=lambda _step, _config: "alpha test",
     )
-    app.settings_screen.list_devices = lambda _key: [("0", "0: alpha input")]
+    app.settings_screen.list_devices = lambda: [("0", "0: alpha input")]
     return app
 
 
