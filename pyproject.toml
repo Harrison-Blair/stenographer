@@ -9,7 +9,6 @@ license-files = ["LICENSE"]
 authors = [{ name = "stenographer contributors" }]
 
 dependencies = [
-    "sounddevice>=0.4.7",
     "numpy>=2.0",
     "evdev>=1.4; sys_platform == 'linux'",
     "soundfile>=0.12",

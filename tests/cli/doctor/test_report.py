@@ -74,7 +74,10 @@ _GUIDANCE = HostGuidance(
             "grant write access to /dev/uinput (udev rule or the uinput group), then re-login"
         ),
         "hotkey_access_ok": "sudo usermod -aG input $USER, then re-login",
-        "has_mic": "no audio input device found; check the microphone / PortAudio",
+        "has_mic": (
+            "install PipeWire with pw-record and pactl "
+            "(Ubuntu: pipewire-bin, pulseaudio-utils) and connect a microphone"
+        ),
         "model_cached": "run: stenographer model download",
     },
     clipboard_fix_hints={"wl-copy": "install wl-clipboard", "x11": _XCLIP_HINT},
@@ -200,6 +203,36 @@ def test_render_missing_capability_carries_fix_hint():
     assert "ASR model cached: MISSING — run: stenographer model download" in report
     assert "clipboard (wl-copy): MISSING — install wl-clipboard" in report
     assert "missing required capabilities: ASR model cached, clipboard" in report
+
+
+@pytest.mark.parametrize(
+    "issue", ["pw-record is not installed", "pactl is not installed", "no microphone found"]
+)
+def test_render_a_missing_capture_tool_is_a_missing_microphone_with_its_reason(issue):
+    report = _render(_caps(has_mic=False, mic_issue=issue))
+
+    assert f"microphone: MISSING — {issue}; install PipeWire with pw-record and pactl" in report
+    assert "missing required capabilities: microphone" in report
+
+
+def _with_device(device):
+    cfg = Config.defaults()
+    return dataclasses.replace(cfg, audio=dataclasses.replace(cfg.audio, input_device=device))
+
+
+def test_render_warns_about_a_device_number_and_asks_to_pick_again():
+    report = _render(_caps(), _with_device("10"))
+
+    assert (
+        'input device: WARN — "10" is a device number from an older version; '
+        "pick the microphone again" in report
+    )
+    assert "all required capabilities present" in report
+
+
+@pytest.mark.parametrize("device", [None, "", "pipewire", "alsa_input.usb-mic"])
+def test_render_has_no_device_warning_for_a_source_name_or_the_default(device):
+    assert "input device:" not in _render(_caps(), _with_device(device))
 
 
 def test_render_clipboard_line_names_the_detected_backend():

@@ -5,10 +5,11 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import json
 import logging
+import pathlib
 import sys
 import threading
-import types
 from datetime import datetime
 from types import SimpleNamespace
 
@@ -472,23 +473,41 @@ def test_checks_test_runs_the_setup_test_of_the_area(check_id, area, label, tmp_
     asyncio.run(exercise())
 
 
-def test_checks_microphone_test_lists_devices_and_never_captures(monkeypatch, tmp_path):
-    # A fake module in place of sounddevice: importing the real one initializes
-    # PortAudio, which fails on a machine with no audio server (CI).
-    def no_capture(*_args, **_kwargs):
-        raise AssertionError("the microphone test opened an audio stream")
-
-    sounddevice = types.ModuleType("sounddevice")
-    sounddevice.PortAudioError = type("PortAudioError", (Exception,), {})
-    for name in ("InputStream", "RawInputStream", "Stream", "rec"):
-        setattr(sounddevice, name, no_capture)
-    sounddevice.query_devices = lambda: (
-        {"name": "alpha mic", "max_input_channels": 1},
-        {"name": "bravo speaker", "max_input_channels": 0},
-        {"name": "charlie mic", "max_input_channels": 2},
+def _install_audio_tools(tmp_path, monkeypatch, *, sources: str) -> pathlib.Path:
+    """Put a fake ``pactl`` and a ``pw-record`` that records its own start on PATH."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    started = tmp_path / "pw-record-started"
+    (tmp_path / "sources.json").write_text(sources)
+    pactl = bin_dir / "pactl"
+    pactl.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "if sys.argv[1:] == ['get-default-source']:\n"
+        "    print('alpha')\n"
+        "else:\n"
+        f"    print(open({str(tmp_path / 'sources.json')!r}).read())\n"
     )
-    sounddevice.default = SimpleNamespace(device=(0, 1))
-    monkeypatch.setitem(sys.modules, "sounddevice", sounddevice)
+    pw_record = bin_dir / "pw-record"
+    pw_record.write_text(f"#!{sys.executable}\nopen({str(started)!r}, 'w').close()\n")
+    for tool in (pactl, pw_record):
+        tool.chmod(0o755)
+    monkeypatch.setenv("PATH", str(bin_dir))
+    return started
+
+
+def test_checks_microphone_test_lists_devices_and_never_captures(monkeypatch, tmp_path):
+    started = _install_audio_tools(
+        tmp_path,
+        monkeypatch,
+        sources=json.dumps(
+            [
+                {"name": "alpha", "description": "alpha mic"},
+                {"name": "bravo.monitor", "description": "Monitor of bravo speaker"},
+                {"name": "charlie", "description": "charlie mic"},
+            ]
+        ),
+    )
     report = DoctorReport((_check("has_mic", "microphone", "input"),), ())
 
     async def exercise():
@@ -499,23 +518,16 @@ def test_checks_microphone_test_lists_devices_and_never_captures(monkeypatch, tm
             await _settle(pilot, lambda: app.checks_tab.test_status)
             await pilot.pause()
             assert _plain(app, "#checks-test-status") == (
-                "test: 2 input devices: 0: alpha mic, 2: charlie mic; no audio was captured"
+                "test: 2 input devices: alpha mic, charlie mic; no audio was captured"
             )
 
     asyncio.run(exercise())
+    assert not started.exists()
 
 
 def test_checks_microphone_test_shows_the_probe_error(monkeypatch, tmp_path):
-    # Importing the real sounddevice starts PortAudio; with no audio server that
-    # raises PortAudioError. The row shows the error of the probe, not a guessed cause.
-    (tmp_path / "sounddevice.py").write_text(
-        "class PortAudioError(Exception):\n"
-        "    pass\n"
-        "raise PortAudioError('Error querying host API -9999')\n",
-        encoding="utf-8",
-    )
-    monkeypatch.syspath_prepend(str(tmp_path))
-    monkeypatch.delitem(sys.modules, "sounddevice", raising=False)
+    # pactl lists nothing it can parse; the row shows the error of the probe.
+    _install_audio_tools(tmp_path, monkeypatch, sources="not json")
     report = DoctorReport((_check("has_mic", "microphone", "input"),), ())
 
     async def exercise():
@@ -526,8 +538,8 @@ def test_checks_microphone_test_shows_the_probe_error(monkeypatch, tmp_path):
             await _settle(pilot, lambda: app.checks_tab.test_status not in {"", "running…"})
             await pilot.pause()
             assert _plain(app, "#checks-test-status") == (
-                f"test: {FAIL} audio subsystem unavailable: Error querying host API -9999; "
-                "no audio was captured"
+                f"test: {FAIL} pactl could not list the audio sources: "
+                "Expecting value: line 1 column 1 (char 0); no audio was captured"
             )
 
     asyncio.run(exercise())
@@ -1021,6 +1033,7 @@ def test_checks_build_report_groups_fake_host_checks_and_counts_warnings(
         lambda: (tmp_path / "stenographer.log", tmp_path / "overlay.log"),
     )
     config = Config.defaults()
+    config = dataclasses.replace(config, audio=dataclasses.replace(config.audio, input_device="10"))
 
     report = doctor_view.build_report(config)
     checks = {check.check_id: check for check in report.checks}
@@ -1028,6 +1041,7 @@ def test_checks_build_report_groups_fake_host_checks_and_counts_warnings(
     assert [(check.group, check.label) for check in report.checks] == [
         ("input", "input access"),
         ("input", "microphone"),
+        ("input", "input device"),
         ("input", "hotkey"),
         ("input", "sounds"),
         ("engine", "speech model"),
@@ -1044,6 +1058,8 @@ def test_checks_build_report_groups_fake_host_checks_and_counts_warnings(
     assert checks["model_cached"].detail == "Underdog Bark 3.0 Pro"
     assert checks["model_cached"].path.startswith(str(data_dir))
     assert checks["system_capture"].status == "warn"
+    assert checks["input_device"].status == "warn"
+    assert checks["input_device"].detail.startswith('"10" is a device number')
     assert checks["overlay"].fix == "Enable XWayland."
     assert checks["clipboard_restore"].fix == "Enable clipboard reads."
     assert hosts == [(config.refine.host, config.refine.model)]
@@ -1052,10 +1068,10 @@ def test_checks_build_report_groups_fake_host_checks_and_counts_warnings(
     if refine_bytes is None:
         assert refine.status == "warn"
         assert refine.detail.endswith("not found")
-        assert report.warn_count == 7
+        assert report.warn_count == 8
     else:
         assert refine.status == "ok"
-        assert report.warn_count == 6
+        assert report.warn_count == 7
     assert report.fail_count == 1
 
 

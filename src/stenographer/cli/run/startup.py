@@ -86,17 +86,6 @@ def run(cfg: Config) -> int:
     plat.install_stop_handlers(_handler)
 
     try:
-        try:
-            daemon.prepare_recorder()
-        except Exception as exc:
-            log_failure(
-                log,
-                logging.WARNING,
-                "recorder: startup_prepare_failed",
-                exc,
-                safe=True,
-                recovery="next_keypress",
-            )
         daemon.run()
     except KeyboardInterrupt:
         pass

@@ -37,7 +37,10 @@ def test_capability_prose_is_the_shipped_wording():
             "grant write access to /dev/uinput (udev rule or the uinput group), then re-login"
         ),
         "hotkey_access_ok": "sudo usermod -aG input $USER, then re-login",
-        "has_mic": "no audio input device found; check the microphone / PortAudio",
+        "has_mic": (
+            "install PipeWire with pw-record and pactl "
+            "(Ubuntu: pipewire-bin, pulseaudio-utils) and connect a microphone"
+        ),
         "model_cached": "run: stenographer model download",
     }
     assert g.clipboard_fix_hints == {"wl-copy": "install wl-clipboard", "x11": _XCLIP_HINT}

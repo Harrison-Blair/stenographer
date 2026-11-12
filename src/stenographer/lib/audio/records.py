@@ -12,27 +12,20 @@ from stenographer.lib.audio.constants import SAMPLE_RATE
 class CaptureStats:
     """What one completed capture cost, for the utterance summary line.
 
-    Negotiated rate, channels and microphone name travel with each capture so
-    analytics comparisons survive stream recovery and configuration changes.
-    Signal and ADC-clock reductions occur only after callbacks quiesce.
+    Rate, channels and the microphone source name travel with each capture so
+    analytics comparisons survive configuration changes. ``callback_count`` is
+    the number of delivered blocks.
     """
 
     activate_ms: float
     capture_seconds: float
     input_frames: int
     output_frames: int
-    overflow: bool
     capped: bool
     first_callback_at: float | None = None
     activation_to_callback_ms: float | None = None
-    max_adc_gap_ms: float | None = None
-    adc_discontinuities: int = 0
     device_name: str | None = None
     input_rate: int = SAMPLE_RATE
     channels: int = 1
     finalize_ms: float | None = None
-    callback_timing_count: int = 0
     callback_count: int = 0
-    callback_metadata_dropped: int = 0
-    overflow_count: int = 0
-    recovered: bool = False

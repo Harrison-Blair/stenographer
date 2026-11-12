@@ -233,7 +233,7 @@ class HubServices:
             return self._device_query()
         from stenographer.lib.audio.probe import input_device_choices, query_devices
 
-        return input_device_choices(query_devices().devices)
+        return input_device_choices(query_devices())
 
     def choose_device(self, value: str | None, label: str | None) -> None:
         """Use a device for the next recordings of this run; ``None`` uses the saved setting."""

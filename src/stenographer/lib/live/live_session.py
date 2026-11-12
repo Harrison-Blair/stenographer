@@ -17,10 +17,11 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
-from stenographer.lib.audio.recorder import Recorder
+from stenographer.lib.audio.device_setting import capture_target
 from stenographer.lib.live.models import vad_model_path
 from stenographer.lib.live.phrase_segmenter import Phrase, PhraseSegmenter
 from stenographer.lib.live.session_writer import SessionWriter
+from stenographer.lib.live.source_watch import SILENT_SECONDS, SourceWatch
 from stenographer.lib.live.speaker_lines import (
     Piece,
     SpeakerNames,
@@ -34,6 +35,7 @@ from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.lib.platform import current_platform
 from stenographer.lib.platform.errors import (
+    MicCaptureError,
     SpeakerDiarizerError,
     SystemAudioCaptureError,
     UnsupportedPlatformError,
@@ -59,6 +61,7 @@ _BLOCK_STOP_WAIT_SECONDS = 0.5
 # At stop a stream labels the audio it still holds; it holds at most a minute.
 _FINISH_SECONDS = 120.0
 _SOURCE_ORDER = {"mic": 0, "system": 1}
+_WATCH_INTERVAL_SECONDS = 1.0
 
 
 class LiveSession:
@@ -109,14 +112,16 @@ class LiveSession:
         except UnsupportedPlatformError as exc:
             self._system_capture = None
             log_failure(log, logging.WARNING, "live: system_source_unavailable", exc, safe=True)
-        self._recorder = Recorder(
-            device=cfg.audio.input_device if device is None else device,
-            max_seconds=0,
-            on_block=self._on_mic_block,
-            streaming=True,
-        )
+        self._mic_capture = self._platform.mic_capture()
+        self._mic_target = capture_target(cfg.audio.input_device if device is None else device)
         self._vad_model = vad_model
         self._monotonic = monotonic if monotonic is not None else time.monotonic
+        self._watch = SourceWatch()
+        # Sources that are off because their capture failed while enabled; a
+        # toggle by the user and the session stop clear the mark.
+        self._failed: set[str] = set()
+        self._watch_stop = threading.Event()
+        self._watch_thread: threading.Thread | None = None
         self._queue: Queue[Phrase | object] = Queue()
         self._lock = threading.RLock()
         self._control_lock = threading.RLock()
@@ -161,6 +166,12 @@ class LiveSession:
                 daemon=True,
             )
             self._transcriber.start()
+            self._watch_thread = threading.Thread(
+                target=self._watch_sources,
+                name="stenographer-live-source-watch",
+                daemon=True,
+            )
+            self._watch_thread.start()
             self._started = True
             for source in ("mic", "system"):
                 if self._enabled[source]:
@@ -331,13 +342,14 @@ class LiveSession:
         with self._control_lock:
             if self._stopped:
                 return
-            if self._enabled[source]:
-                self._enabled[source] = False
+            with self._lock:
+                enabled = not self._enabled[source]
+                self._enabled[source] = enabled
+                self._failed.discard(source)
+            if not enabled:
                 self._stop_source(source)
-            else:
-                self._enabled[source] = True
-                if not self._paused:
-                    self._start_source(source)
+            elif not self._paused:
+                self._start_source(source)
             log.info(
                 fmt_event("live", "source_toggled", source=source, state=self.source_states[source])
             )
@@ -387,6 +399,7 @@ class LiveSession:
             if self._stop_started:
                 return
             self._stop_started = True
+            self._watch_stop.set()
             self._close_block_delivery()
             self._freeze_clock()
             for source in ("mic", "system"):
@@ -396,13 +409,17 @@ class LiveSession:
             for source in ("mic", "system"):
                 if self._source_seen[source]:
                     self._pad_source(source, duration)
-            self._stopped = True
+            with self._lock:
+                self._stopped = True
+                self._failed.clear()
             self._finish_streams()
             if self._transcriber is not None:
                 self._queue.put(_STOP)
         if self._transcriber is not None:
             self._queue.join()
             self._transcriber.join()
+        if self._watch_thread is not None:
+            self._watch_thread.join()
         try:
             self._writer.close()
             self._label_overflowed_sources()
@@ -506,18 +523,27 @@ class LiveSession:
                     self._pushed_seconds[source], self._segment_offsets[source]
                 )
                 self._active[source] = True
+                # Watched before the capture starts: a failure that the reader
+                # reports before start returns takes the source out again.
+                self._watch.started(source, self._monotonic())
             if source == "mic":
-                self._recorder.start()
+                self._mic_capture.stop()
+                self._mic_capture.start(self._mic_target, self._on_mic_block)
             else:
                 self._system_capture.start(self._on_system_block)
             with self._lock:
                 self._source_seen[source] = True
-            log.info(fmt_event("live", "source_started", source=source))
+                started = self._active[source]
+            if started:
+                log.info(fmt_event("live", "source_started", source=source))
         except Exception as exc:
             with self._lock:
+                if self._enabled[source]:
+                    self._failed.add(source)
                 self._active[source] = False
                 self._enabled[source] = False
                 self._segmenters[source] = None
+                self._watch.stopped(source)
             log_failure(
                 log, logging.WARNING, "live: source_start_failed", exc, safe=True, source=source
             )
@@ -543,7 +569,7 @@ class LiveSession:
             was_active = self._active[source]
         if source == "mic":
             try:
-                self._recorder.stop()
+                self._mic_capture.stop()
             except Exception as exc:
                 log_failure(log, logging.WARNING, "live: mic_stop_failed", exc, safe=True)
         else:
@@ -554,6 +580,7 @@ class LiveSession:
         with self._lock:
             self._active[source] = False
             self._speech[source] = False
+            self._watch.stopped(source)
             segmenter = self._segmenters[source]
             self._segmenters[source] = None
         if segmenter is not None:
@@ -562,22 +589,59 @@ class LiveSession:
         if was_active:
             log.info(fmt_event("live", "source_stopped", source=source))
 
-    def _on_mic_block(self, block: np.ndarray, _rate: int, _epoch: int) -> None:
+    def _on_mic_block(self, block: np.ndarray | MicCaptureError) -> None:
+        if isinstance(block, MicCaptureError):
+            self._source_failed("mic", block)
+            return
         self._accept_block("mic", block)
 
     def _on_system_block(self, block: np.ndarray | SystemAudioCaptureError) -> None:
         if isinstance(block, SystemAudioCaptureError):
-            with self._lock:
-                self._active["system"] = False
-                self._enabled["system"] = False
-                self._speech["system"] = False
-                segmenter = self._segmenters["system"]
-                self._segmenters["system"] = None
-            if segmenter is not None:
-                self._enqueue_phrases(segmenter.flush(), self._segment_offsets["system"])
-            log_failure(log, logging.WARNING, "live: system_source_failed", block, safe=True)
+            self._source_failed("system", block)
             return
         self._accept_block("system", block)
+
+    def _source_failed(self, source: str, error: Exception) -> None:
+        with self._lock:
+            # A failure of a source that the user already turned off is dropped.
+            if self._enabled[source]:
+                self._failed.add(source)
+            self._active[source] = False
+            self._enabled[source] = False
+            self._speech[source] = False
+            self._watch.stopped(source)
+            segmenter = self._segmenters[source]
+            self._segmenters[source] = None
+        if segmenter is not None:
+            self._enqueue_phrases(segmenter.flush(), self._segment_offsets[source])
+        if source == "mic":
+            log_failure(log, logging.WARNING, "live: mic_source_failed", error, safe=True)
+        else:
+            log_failure(log, logging.WARNING, "live: system_source_failed", error, safe=True)
+
+    def _watch_sources(self) -> None:
+        """Log one WARNING when an active source stops delivering, and INFO when it returns."""
+        while not self._watch_stop.wait(_WATCH_INTERVAL_SECONDS):
+            with self._lock:
+                silent, resumed = self._watch.check(self._monotonic())
+            for source in silent:
+                log.warning(
+                    fmt_event("live", "source_silent", source=source, seconds=SILENT_SECONDS)
+                )
+            for source in resumed:
+                log.info(fmt_event("live", "source_resumed", source=source))
+
+    @property
+    def failed_sources(self) -> tuple[str, ...]:
+        """Return the sources that are off because their capture failed."""
+        with self._lock:
+            return tuple(source for source in ("mic", "system") if source in self._failed)
+
+    @property
+    def silent_sources(self) -> tuple[str, ...]:
+        """Return the active sources that delivered no audio for ``SILENT_SECONDS``."""
+        with self._lock:
+            return self._watch.silent(self._monotonic())
 
     def _accept_block(self, source: str, block: np.ndarray) -> None:
         try:
@@ -587,6 +651,7 @@ class LiveSession:
                     return
                 segmenter = self._segmenters[source]
                 self._source_seen[source] = True
+                self._watch.block(source, self._monotonic())
                 self._write_audio(source, samples)
                 rms = float(np.sqrt(np.mean(np.square(samples)))) if samples.size else 0.0
                 self._levels[source] = 20 * math.log10(rms) if rms > 0 else float("-inf")

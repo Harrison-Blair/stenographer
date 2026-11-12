@@ -11,7 +11,6 @@ import time
 import numpy as np
 import pytest
 
-from stenographer.lib.audio.recorder import RecorderState
 from stenographer.lib.config.models import Config
 from stenographer.lib.contracts.loading_model import LoadingModel
 from stenographer.lib.contracts.overlay_state import OverlayState
@@ -53,8 +52,7 @@ def test_build_wires_collaborators_lazily():
         assert daemon._listener is not None
         assert daemon._deliverer is not None
         assert daemon._worker.process_ids == ()
-        assert daemon._recorder._state is not RecorderState.CAPTURING
-        assert daemon._recorder._state is not RecorderState.PREPARED
+        assert not daemon._recorder.capturing
     finally:
         # stop() before run() must be a safe no-op.
         daemon.stop()
@@ -133,10 +131,11 @@ def test_a_recorder_stop_failure_still_closes_the_utterance(daemon_logs):
     try:
         daemon.on_key_down()
         daemon.on_key_up()
+        _join_pipeline(daemon)
     finally:
         daemon.stop()
 
-    assert daemon._pipeline_thread is None
+    assert daemon._worker.utterances == []
     assert "recorder: failed" in daemon_logs.text
     assert "outcome=ERROR" in _summary(daemon_logs)
     assert not [t for t in threading.enumerate() if t.name == "stenographer-pipeline"]
@@ -189,10 +188,10 @@ def test_cancel_during_capture_finalization_never_starts_pipeline(daemon_logs):
     try:
         daemon.on_key_down()
         daemon.on_key_up()
+        _join_pipeline(daemon)
     finally:
         daemon.stop()
 
-    assert daemon._pipeline_thread is None
     assert daemon._worker.utterances == []
     assert daemon._deliverer.delivered == []
     assert daemon._feedback.cues == ["record_start", "error"]
@@ -223,13 +222,10 @@ def test_cancel_during_finalization_after_a_delivered_utterance_still_cancels(da
         recorder.cancel = daemon.on_cancel
         daemon.on_key_down()
         daemon.on_key_up()
-        if daemon._pipeline_thread is not first_pipeline:
-            daemon._pipeline_thread.join(timeout=2.0)
-        second_pipeline = daemon._pipeline_thread
+        _join_pipeline(daemon)
     finally:
         daemon.stop()
 
-    assert second_pipeline is first_pipeline
     assert len(daemon._worker.utterances) == 1
     assert len(daemon._deliverer.delivered) == 1
     assert "outcome=CANCELLED" in daemon_logs.text
@@ -616,15 +612,8 @@ def test_a_second_press_while_recording_is_refused_without_a_count(daemon_logs):
 
 def test_a_recorder_start_failure_closes_the_utterance_and_reports_it(daemon_logs):
     class _BrokenRecorder(_Recorder):
-        def __init__(self, samples) -> None:
-            super().__init__(samples)
-            self.closed = 0
-
-        def start(self) -> None:
+        def start(self, on_failure=None) -> None:
             raise OSError("device disappeared")
-
-        def close(self) -> None:
-            self.closed += 1
 
     daemon, status = _daemon_with_status()
     recorder = _BrokenRecorder(_SPEECH)
@@ -633,7 +622,6 @@ def test_a_recorder_start_failure_closes_the_utterance_and_reports_it(daemon_log
         daemon.on_key_down()
 
         assert daemon._recording is False
-        assert recorder.closed == 1
         assert daemon._notifier.errors == ["could not start recording"]
         assert daemon._feedback.cues == ["error"]
         assert status.states == [OverlayState.ERROR]
@@ -678,10 +666,10 @@ def test_a_stale_cancel_cannot_finalize_the_current_recording():
         daemon.stop()
 
 
-def test_a_recorder_failure_during_cancel_still_closes_the_utterance(daemon_logs):
+def test_cancel_abandons_the_capture_without_waiting_for_its_end(daemon_logs):
     class _BrokenRecorder(_Recorder):
         def stop(self):
-            raise OSError("stream vanished")
+            raise AssertionError("cancel waited for the capture to end")
 
     daemon, status = _daemon_with_status()
     daemon._recorder = _BrokenRecorder(_SPEECH)
@@ -695,7 +683,6 @@ def test_a_recorder_failure_during_cancel_still_closes_the_utterance(daemon_logs
     finally:
         daemon.stop()
 
-    assert "recorder: cancel_finalize_failed" in daemon_logs.text
     assert "outcome=CANCELLED" in _summary(daemon_logs)
 
 
@@ -764,8 +751,8 @@ def test_shutdown_during_capture_finalization_takes_the_pill_straight_down(daemo
         daemon.on_key_down()
         daemon.request_stop()
         daemon.on_key_up()
+        _join_pipeline(daemon)
 
-        assert daemon._pipeline_thread is None
         assert daemon._busy is False
         assert status.states == [OverlayState.RECORDING, OverlayState.HIDDEN]
         assert daemon._worker.utterances == []
@@ -1004,3 +991,298 @@ def test_the_daemon_refine_request_carries_the_vocabulary(ollama_wire):
     wire = json.dumps(ollama_wire[0]["messages"])
     assert "Kubernetes" in wire
     assert "PipeWire" in wire
+
+
+def test_a_capture_that_stops_during_a_dictation_ends_it_with_the_microphone_error(daemon_logs):
+    from stenographer.lib.audio.recorder import Recorder
+    from stenographer.lib.platform.errors import MicCaptureError
+
+    from .support import _MicCapture
+
+    capture = _MicCapture()
+    daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0))
+    daemon._recorder = Recorder(capture_factory=lambda: capture, device=None, max_seconds=10)
+    try:
+        daemon.on_key_down()
+        assert daemon._recording is True
+        capture.on_block(np.zeros(512, dtype=np.float32))
+
+        capture.on_block(MicCaptureError("pw-record exited unexpectedly with status 1"))
+
+        deadline = time.monotonic() + 2
+        while daemon._recording or daemon._busy:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert not capture.running
+        assert daemon._notifier.errors == ["recording failed; audio was discarded"]
+        # The key release that follows changes nothing.
+        daemon.on_key_up()
+    finally:
+        daemon.stop()
+
+    assert daemon._worker.utterances == []
+    assert "recorder: failed" in daemon_logs.text
+    assert "outcome=ERROR" in _summary(daemon_logs)
+
+
+class _SlowStopCapture:
+    """A ``MicCapture`` whose ``stop`` blocks the way ending a real child does."""
+
+    def __init__(self) -> None:
+        from stenographer.lib.platform.errors import MicCaptureError
+
+        self._error = MicCaptureError
+        self.running = False
+        self.stopping = threading.Event()
+        self.release = threading.Event()
+
+    def start(self, target, on_block) -> None:
+        if self.running:
+            raise self._error("microphone capture is already running")
+        self.running = True
+
+    def stop(self) -> None:
+        self.stopping.set()
+        self.release.wait(5)
+        self.running = False
+
+
+def test_a_press_at_once_after_a_cancel_starts_while_the_old_capture_still_ends(daemon_logs):
+    from stenographer.lib.audio.recorder import Recorder
+
+    made: list[_SlowStopCapture] = []
+
+    def factory():
+        made.append(_SlowStopCapture())
+        return made[-1]
+
+    daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0))
+    daemon._recorder = Recorder(capture_factory=factory, device=None, max_seconds=60)
+    try:
+        daemon.on_key_down()
+        daemon.on_cancel()
+
+        press = threading.Thread(target=daemon.on_key_down)
+        press.start()
+        press.join(1)
+
+        # The old capture is still ending; the press did not wait for it.
+        assert not press.is_alive()
+        assert made[0].running
+        assert daemon._notifier.errors == []
+        assert daemon._recording is True
+        assert daemon._utterance_id == 2
+        assert made[1].running
+    finally:
+        for capture in made:
+            capture.release.set()
+        daemon.stop()
+
+    assert "recorder: failed" not in daemon_logs.text
+    assert not any(capture.running for capture in made)
+
+
+def test_a_press_and_release_during_a_failed_captures_end_start_nothing(daemon_logs):
+    # Through the real listener dispatch: a press while the daemon is busy is
+    # ignored at once, so the release behind it is never queued behind a wait.
+    from stenographer.lib.audio.recorder import Recorder
+    from stenographer.lib.hotkey.chord_tracker import ChordTracker
+    from stenographer.lib.platform.errors import MicCaptureError
+
+    capture = _SlowStopCapture()
+    daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0))
+    daemon._recorder = Recorder(capture_factory=lambda: capture, device=None, max_seconds=60)
+    tracker = ChordTracker(
+        lock=threading.RLock(),
+        bindings={"agent": frozenset({1})},
+        on_binding_start=lambda _name: daemon.on_key_down(),
+        on_binding_stop=lambda _name: daemon.on_key_up(),
+    )
+    tracker._held_by_device[1] = set()
+    try:
+        daemon.on_key_down()
+        daemon._recorder._take.receive(MicCaptureError("pw-record exited"))
+        assert capture.stopping.wait(2)
+
+        press = threading.Thread(target=lambda: tracker._key_event(1, 1, 1))
+        press.start()
+        press.join(1)
+        release = threading.Thread(target=lambda: tracker._key_event(1, 1, 0))
+        release.start()
+        release.join(1)
+
+        assert not press.is_alive()
+        assert not release.is_alive()
+        capture.release.set()
+        deadline = time.monotonic() + 5
+        while daemon._busy:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert daemon._utterance_id == 1
+        assert daemon._recording is False
+        assert daemon._notifier.errors == ["recording failed; audio was discarded"]
+    finally:
+        capture.release.set()
+        daemon.stop()
+
+    assert "hotkey: key_down_ignored reason=busy" in daemon_logs.text
+
+
+def _join_pipeline(daemon: Daemon) -> None:
+    thread = daemon._pipeline_thread
+    if thread is not None:
+        thread.join(timeout=10.0)
+        assert not thread.is_alive()
+
+
+_FAKE_PW_RECORD = """#!{python}
+import os
+import struct
+import sys
+import time
+from pathlib import Path
+
+folder = Path(os.environ["PW_FAKE_DIR"])
+sys.stdout.buffer.write(struct.pack("<512f", *([0.0] * 512)))
+sys.stdout.buffer.flush()
+fail = folder / "fail-next"
+if fail.exists():
+    fail.unlink()
+    raise SystemExit(1)
+while True:
+    time.sleep(0.05)
+"""
+
+
+def test_no_capture_child_outlives_cancels_a_failure_and_the_daemon_stop(
+    tmp_path, monkeypatch, daemon_logs
+):
+    import os
+    import sys
+
+    from stenographer.lib.audio.recorder import Recorder
+    from stenographer.lib.platform.linux.mic_capture import LinuxMicCapture
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "pw-record"
+    fake.write_text(_FAKE_PW_RECORD.format(python=sys.executable))
+    fake.chmod(0o755)
+    children = tmp_path / "children"
+    children.mkdir()
+    monkeypatch.setenv("PATH", str(bin_dir))
+    monkeypatch.setenv("PW_FAKE_DIR", str(children))
+
+    pids: list[int] = []
+
+    class CountingCapture(LinuxMicCapture):
+        def start(self, target, on_block):
+            super().start(target, on_block)
+            pids.append(self._process.pid)
+
+    def alive() -> list[int]:
+        living = []
+        for pid in pids:
+            try:
+                os.kill(pid, 0)  # an unreaped child (zombie) also counts
+            except ProcessLookupError:
+                continue
+            living.append(pid)
+        return living
+
+    daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0))
+    daemon._recorder = Recorder(capture_factory=CountingCapture, device=None, max_seconds=60)
+    try:
+        for _ in range(4):  # quick cancel-and-press
+            daemon.on_key_down()
+            daemon.on_cancel()
+        (children / "fail-next").write_text("")
+        daemon.on_key_down()
+        deadline = time.monotonic() + 5
+        while daemon._recording or daemon._busy:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert daemon._notifier.errors == ["recording failed; audio was discarded"]
+        daemon.on_key_down()
+        assert daemon._recording is True
+    finally:
+        daemon.stop()
+
+    assert len(pids) == 6
+    assert alive() == []
+
+
+def test_a_release_ends_its_capture_before_it_returns_and_keeps_later_audio_out():
+    # Speech after the release must not enter the dictation, and the
+    # microphone is closed when the release returns.
+    from stenographer.lib.audio.recorder import Recorder
+
+    from .support import _MicCapture
+
+    class RecordingThreadCapture(_MicCapture):
+        def stop(self) -> None:
+            self.stopped_on = threading.current_thread()
+            super().stop()
+
+    capture = RecordingThreadCapture()
+    daemon = _daemon()
+    daemon._recorder = Recorder(capture_factory=lambda: capture, device=None, max_seconds=60)
+    gate = threading.Event()
+    observed: list[np.ndarray] = []
+
+    def held_pipeline(samples: np.ndarray) -> None:
+        gate.wait(5)
+        observed.append(samples.copy())
+
+    daemon._run_pipeline = held_pipeline
+    try:
+        daemon.on_key_down()
+        capture.on_block(np.zeros(512, dtype=np.float32))
+        daemon.on_key_up()
+
+        # Ended on the release path itself, not later on another thread.
+        assert capture.stopped_on is threading.current_thread()
+        assert not capture.running
+        capture.on_block(np.ones(512, dtype=np.float32))
+        daemon.on_key_down()
+        assert daemon._utterance_id == 1  # a press while busy is ignored
+        gate.set()
+        _join_pipeline(daemon)
+    finally:
+        gate.set()
+        daemon.stop()
+
+    assert len(observed) == 1
+    assert observed[0].size == 512
+    assert float(observed[0].sum()) == 0.0
+
+
+def test_a_capture_that_fails_before_its_start_returns_ends_the_dictation(daemon_logs):
+    # The reader can report an immediate child exit while on_key_down still
+    # holds the state lock; the dictation must still end with the error.
+    from stenographer.lib.audio.recorder import Recorder
+    from stenographer.lib.platform.errors import MicCaptureError
+
+    from .support import _MicCapture
+
+    class FailsAtOnce(_MicCapture):
+        def start(self, target, on_block) -> None:
+            super().start(target, on_block)
+            on_block(MicCaptureError("pw-record exited unexpectedly with status 1"))
+
+    daemon = _daemon(result=TranscriptionResult(text="one", duration_seconds=1.0))
+    daemon._recorder = Recorder(capture_factory=FailsAtOnce, device=None, max_seconds=60)
+    try:
+        daemon.on_key_down()
+        deadline = time.monotonic() + 5
+        while daemon._recording or daemon._busy:
+            assert time.monotonic() < deadline
+            time.sleep(0.01)
+        assert daemon._notifier.errors == ["recording failed; audio was discarded"]
+        daemon.on_key_down()
+        assert daemon._recording is True  # the next press starts normally
+    finally:
+        daemon.stop()
+
+    assert daemon._worker.utterances == []
+    assert "recorder: failed phase=stop" in daemon_logs.text

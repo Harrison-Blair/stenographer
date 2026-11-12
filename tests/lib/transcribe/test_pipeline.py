@@ -60,7 +60,6 @@ def test_summary_keeps_the_field_order_and_renders_flags_as_digits():
         capture_s=2.0,
         in_frames=32000,
         out_frames=32000,
-        overflow=False,
         capped=False,
         peak_rms=0.0005123456,
         cold=True,
@@ -80,7 +79,7 @@ def test_summary_keeps_the_field_order_and_renders_flags_as_digits():
 
     assert _line(record) == (
         "pipeline: utterance utt=1 mode=toggle outcome=DELIVERED activate_ms=1.2 capture_s=2 "
-        "in_frames=32000 out_frames=32000 overflow=0 capped=0 peak_rms=0.000512 "
+        "in_frames=32000 out_frames=32000 capped=0 peak_rms=0.000512 "
         "cold=1 load_ms=900 lock_wait_ms=0 decode_ms=1500 vad_frames=16000 "
         "segments=1 words=4 chars_raw=20 chars_out=21 copy_ms=8 release_wait_ms=30 "
         "release_timeout=0 total_ms=2500"
@@ -168,21 +167,14 @@ def test_capture_measurements_are_projected_relative_to_the_press():
         capture_seconds=2.0,
         input_frames=96000,
         output_frames=32000,
-        overflow=True,
         capped=True,
         first_callback_at=100.25,
         activation_to_callback_ms=12.5,
-        max_adc_gap_ms=3.0,
-        adc_discontinuities=2,
         device_name="USB microphone",
         input_rate=48000,
         channels=2,
         finalize_ms=1.5,
-        callback_timing_count=180,
         callback_count=200,
-        callback_metadata_dropped=20,
-        overflow_count=3,
-        recovered=True,
     )
 
     apply_capture(record, stats)
@@ -196,11 +188,8 @@ def test_capture_measurements_are_projected_relative_to_the_press():
     assert record.input_rate == 48000
     assert record.channels == 2
     assert record.device_name == "USB microphone"
-    assert record.overflow is True
     assert record.capped is True
-    assert record.recovered is True
-    assert record.callback_metadata_dropped == 20
-    assert record.adc_discontinuities == 2
+    assert record.callback_count == 200
     assert record.activate_ms == 4.5
 
 
@@ -214,7 +203,6 @@ def test_capture_without_a_callback_leaves_press_latency_unknown():
             capture_seconds=0.0,
             input_frames=0,
             output_frames=0,
-            overflow=False,
             capped=False,
         ),
     )
@@ -296,7 +284,6 @@ def test_every_phase_is_a_no_op_without_a_record():
         capture_seconds=1.0,
         input_frames=16000,
         output_frames=16000,
-        overflow=False,
         capped=False,
     )
 

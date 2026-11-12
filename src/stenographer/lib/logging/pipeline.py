@@ -335,8 +335,8 @@ def _render(value: object) -> str:
     """Render one field value, quoting it only when it would break the format.
 
     ``key=value`` is the whole contract the log is grepped and split on, and a
-    runtime value carrying a space silently breaks it: an argv, a PortAudio
-    device name, a user path, or an OS error's own ``[Errno 13] Permission
+    runtime value carrying a space silently breaks it: an argv, a microphone
+    description, a user path, or an OS error's own ``[Errno 13] Permission
     denied``. Those and Unicode control characters become one double-quoted
     token instead of several bare ones; every other value stays bare, so the
     common line is unchanged.

@@ -42,7 +42,6 @@ _CAPTURE = CaptureStats(
     capture_seconds=1.0,
     input_frames=_RATE,
     output_frames=_RATE,
-    overflow=False,
     capped=False,
 )
 
@@ -98,14 +97,15 @@ class _Recorder:
         self._samples = samples
         self.last_capture: CaptureStats | None = None
 
-    def start(self) -> None:
+    def start(self, on_failure=None) -> None:
         self.last_capture = None
 
     def stop(self) -> np.ndarray:
         self.last_capture = _CAPTURE
         return self._samples
 
-    def prepare(self) -> None: ...
+    def abandon(self) -> None:
+        self.last_capture = _CAPTURE
 
     def close(self) -> None: ...
 
@@ -362,18 +362,39 @@ class _Listener:
         return True
 
 
+class _MicCapture:
+    """The ``MicCapture`` contract with no device: the test delivers blocks or a failure."""
+
+    def __init__(self) -> None:
+        self.on_block = None
+        self.running = False
+        self.starts = 0
+
+    def start(self, target, on_block) -> None:
+        self.starts += 1
+        self.on_block = on_block
+        self.running = True
+
+    def stop(self) -> None:
+        self.running = False
+
+
 class _Platform:
     """Host double for ``Daemon.build``: inert backends, real key vocabulary."""
 
     name = "test"
 
     def __init__(self) -> None:
+        self.mic = _MicCapture()
         self.listener: _Listener | None = None
         self.injector = _KeyInjector()
         self.notifier_double = _Notifier()
         self.clipboard_backends: list[str] = []
         self.copied: list[str] = []
         self.reader_available = True
+
+    def mic_capture(self):
+        return self.mic
 
     def cue_player(self):
         return None

@@ -1,54 +1,47 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pure-logic tests for the shared input-device enumeration and its adapters."""
+"""Pure-logic tests for the microphone listing adapters and the device setting."""
 
 from __future__ import annotations
 
-import sys
+import pytest
 
-from stenographer.lib.audio.probe import has_input_device, input_device_choices, query_devices
+from stenographer.lib.audio.device_setting import capture_target, is_device_index
+from stenographer.lib.audio.probe import input_device_choices, mic_issue
+from stenographer.lib.platform.mic_capture import InputSource, InputSources
 
-_DEVICES = [
-    {"name": "hdmi-out", "max_input_channels": 0},
-    {"name": "usb mic", "max_input_channels": 1},
-    {"name": "webcam mic", "max_input_channels": 2},
-]
-
-
-def test_has_input_device_ignores_output_only_devices():
-    assert has_input_device(_DEVICES) is True
-    assert has_input_device([{"name": "hdmi-out", "max_input_channels": 0}]) is False
-    assert has_input_device([]) is False
-    assert has_input_device([{"name": "nameless"}]) is False
+_QUERY = InputSources(
+    sources=(InputSource("alsa_input.usb", "USB mic"), InputSource("remap", "Desk mic")),
+    default="remap",
+)
 
 
-def test_input_device_choices_keep_portaudio_indices():
-    assert input_device_choices(_DEVICES) == [
-        ("1", "1: usb mic"),
-        ("2", "2: webcam mic"),
-    ]
+def test_input_device_choices_save_the_source_name_and_show_its_description():
+    assert input_device_choices(_QUERY) == [("alsa_input.usb", "USB mic"), ("remap", "Desk mic")]
+    assert input_device_choices(InputSources(error="pactl is not installed")) == []
 
 
-def test_input_device_choices_empty_without_inputs():
-    assert input_device_choices([{"name": "hdmi-out", "max_input_channels": 0}]) == []
-
-
-def test_input_device_choices_fall_back_to_a_placeholder_name():
-    assert input_device_choices([{"max_input_channels": 1}]) == [("0", "0: ?")]
-
-
-def test_query_devices_reports_a_portaudio_start_failure_on_import(monkeypatch, tmp_path):
-    # The real sounddevice starts PortAudio when it is imported; with no audio
-    # server that raises PortAudioError, which is neither ImportError nor OSError.
-    (tmp_path / "sounddevice.py").write_text(
-        "class PortAudioError(Exception):\n"
-        "    pass\n"
-        "raise PortAudioError('Error querying host API -9999')\n",
-        encoding="utf-8",
+def test_mic_issue_names_the_listing_error_or_a_missing_microphone():
+    assert mic_issue(_QUERY) is None
+    assert mic_issue(InputSources(error="pw-record is not installed")) == (
+        "pw-record is not installed"
     )
-    monkeypatch.syspath_prepend(str(tmp_path))
-    monkeypatch.delitem(sys.modules, "sounddevice", raising=False)
+    assert mic_issue(InputSources()) == "no microphone found"
 
-    query = query_devices()
 
-    assert query.devices == ()
-    assert query.error is not None
+@pytest.mark.parametrize("setting", [None, "", "pipewire", "default", "pulse", "0", "10"])
+def test_these_settings_mean_the_default_microphone(setting):
+    assert capture_target(setting) is None
+
+
+@pytest.mark.parametrize(
+    "setting", ["alsa_input.usb-HP_HyperX-00.iec958-stereo", "steno_build_mic", "Pulse", "1a"]
+)
+def test_any_other_setting_is_a_pipewire_source_name(setting):
+    assert capture_target(setting) == setting
+
+
+def test_only_a_decimal_number_is_an_old_device_index():
+    assert is_device_index("10") is True
+    assert is_device_index("0") is True
+    for setting in (None, "", "pipewire", "hw:5,0", "1a"):
+        assert is_device_index(setting) is False

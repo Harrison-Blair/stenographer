@@ -409,6 +409,12 @@ class RecordScreen(HubScreen):
             items.append(item)
         if not items:
             items.append(Text("no speakers yet", style="#8b93a1"))
+        stopped = getattr(session, "failed_sources", ()) if session is not None else ()
+        for source in stopped:
+            items.append(Text(f"! {source} stopped", style="#ffaf5f"))
+        silent = getattr(session, "silent_sources", ()) if session is not None else ()
+        for source in silent:
+            items.append(Text(f"! {source} no audio", style="#ffaf5f"))
         notice = getattr(session, "speaker_notice", None) if session is not None else None
         if notice:
             items.append(Text(f"! {notice}", style="#ffaf5f"))

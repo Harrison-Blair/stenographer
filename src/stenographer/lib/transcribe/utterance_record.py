@@ -27,12 +27,9 @@ class UtteranceRecord:
     activate_ms: float | None = None
     press_to_callback_ms: float | None = None
     activation_to_callback_ms: float | None = None
-    max_adc_gap_ms: float | None = None
-    adc_discontinuities: int | None = None
     capture_s: float | None = None
     in_frames: int | None = None
     out_frames: int | None = None
-    overflow: bool | None = None
     capped: bool | None = None
     peak_rms: float | None = None
     cold: bool | None = None
@@ -75,11 +72,7 @@ class UtteranceRecord:
     stop_to_chord_ms: float | None = None
     input_rate: int | None = None
     channels: int | None = None
-    callback_timing_count: int | None = None
     callback_count: int | None = None
-    callback_metadata_dropped: int | None = None
-    overflow_count: int | None = None
-    recovered: bool | None = None
     mean_rms: float | None = None
     clipping_fraction: float | None = None
     ignored_busy_presses: int = 0

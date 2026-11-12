@@ -20,6 +20,7 @@ from stenographer.lib.platform.host_probe import HostProbe
 from stenographer.lib.platform.hotkey_listener import HotkeyListener
 from stenographer.lib.platform.key_injector import KeyInjector
 from stenographer.lib.platform.key_table import KeyTable
+from stenographer.lib.platform.mic_capture import InputSources, MicCapture
 from stenographer.lib.platform.notifier import Notifier
 from stenographer.lib.platform.process_counters import ProcessCounters
 from stenographer.lib.platform.single_instance_lock import SingleInstanceLock
@@ -86,6 +87,14 @@ class Platform(Protocol):
     def cue_player(self) -> CuePlayer | None: ...
 
     # --- audio capture ---
+    def mic_capture(self) -> MicCapture:
+        """A new microphone capture; it holds no device until ``start``."""
+        ...
+
+    def input_sources(self) -> InputSources:
+        """The microphones that a capture can target, for the pickers and ``devices``."""
+        ...
+
     def system_audio_capture(self) -> SystemAudioCapture: ...
 
     def ffmpeg_decoder(self) -> FfmpegDecoder:

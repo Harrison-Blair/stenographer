@@ -8,6 +8,7 @@ import logging
 import os
 import threading
 import time
+from functools import partial
 from typing import TYPE_CHECKING
 
 from stenographer.lib.audio.recorder import Recorder
@@ -167,6 +168,7 @@ class Daemon:
             on_model_loading_finished=on_model_loading_finished,
         )
         recorder = Recorder(
+            capture_factory=plat.mic_capture,
             device=cfg.audio.input_device,
             max_seconds=cfg.audio.max_recording_seconds,
             on_block=status.audio_block,
@@ -520,6 +522,19 @@ class Daemon:
             )
         self.on_key_up(generation=generation)
 
+    def _on_capture_failed(self, generation: int) -> None:
+        """Capture reader thread: end utterance *generation* now; ``on_key_up`` reports it.
+
+        The reader takes no lock here: a new thread ends the recording, and
+        ``on_key_up`` ignores it when that utterance is no longer recording.
+        """
+        threading.Thread(
+            target=self.on_key_up,
+            kwargs={"generation": generation},
+            name="stenographer-capture-failed",
+            daemon=True,
+        ).start()
+
     def _arm_max_timer(self, started_at: float) -> None:
         """Arm the cap timer for what is left of this utterance's window.
 
@@ -546,6 +561,8 @@ class Daemon:
             self._max_timer = None
 
     def on_key_down(self, *, profile: RefineProfile = RefineProfile.AGENT) -> None:
+        # A press never waits for a capture that ends: each dictation owns its
+        # own capture child, and a busy daemon ignores the press at once.
         with self._lock:
             if not can_start(self._recording, self._busy, self._stop_event.is_set()):
                 if self._busy and self._record is not None:
@@ -573,10 +590,11 @@ class Daemon:
             self._telemetry.start(self._record)
             self._worker.hold_model()
             try:
-                self._recorder.start()
+                self._recorder.start(
+                    on_failure=partial(self._on_capture_failed, self._utterance_id)
+                )
             except Exception as exc:
                 log_failure(log, logging.ERROR, "recorder: failed", exc, safe=True, phase="start")
-                self._recorder.close()
                 self._worker.release_model()
                 self._record.failure = "start_failed"
                 self._emit_summary(self._take_record(Outcome.ERROR.name))
@@ -608,22 +626,17 @@ class Daemon:
             self._cancel_recording(generation)
 
     def _cancel_recording(self, generation: int) -> None:
-        """Finalize a live capture as cancelled while retaining the recorder."""
-        with self._capture_lock:
-            with self._lock:
-                if generation != self._utterance_id or not self._recording:
-                    return
-                self._mark_stopped()
-                self._busy = False
-            try:
-                self._recorder.stop()
-            except Exception as exc:
-                log_failure(log, logging.DEBUG, "recorder: cancel_finalize_failed", exc, safe=True)
-            with self._lock:
-                self._secure_capture()
-                self._worker.release_model()
-                self._publish_cancelled()
-                self._emit_summary(self._take_record("CANCELLED"))
+        """Close a live capture as cancelled; its child ends in the background."""
+        with self._lock:
+            if generation != self._utterance_id or not self._recording:
+                return
+            self._mark_stopped()
+            self._busy = False
+            self._recorder.abandon()
+            self._secure_capture()
+            self._worker.release_model()
+            self._publish_cancelled()
+            self._emit_summary(self._take_record("CANCELLED"))
 
     def on_key_up(self, *, generation: int | None = None) -> None:
         with self._lock:
@@ -641,13 +654,13 @@ class Daemon:
             # the pipeline below publishes HIDDEN or ERROR itself.
             if not self._cancel_pending():
                 self._publish_state(OverlayState.TRANSCRIBING)
-        # Callback-clock reduction and sample finalization are outside lifecycle locks.
+        # The capture ends here, on the release path, so no audio after the
+        # release enters the dictation. A press meanwhile is ignored: busy.
         with self._capture_lock:
             try:
                 samples = self._recorder.stop()
             except Exception as exc:
                 log_failure(log, logging.ERROR, "recorder: failed", exc, safe=True, phase="stop")
-                self._recorder.close()
                 with self._lock:
                     self._busy = False
                     if self._record is not None:
@@ -727,10 +740,6 @@ class Daemon:
                 outcome = record.outcome if record is not None else None
                 self._emit_summary(self._take_record(outcome or outcome_name))
                 self._record_profile = None
-
-    def prepare_recorder(self) -> None:
-        """Open the audio path ahead of the first press."""
-        self._recorder.prepare()
 
     def run(self) -> None:
         """Start the listener and block until stopped."""

@@ -1,65 +1,37 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""One PortAudio input-device enumeration for the whole program.
+"""One microphone listing for the whole program.
 
-The capability gate, `setup`, and `devices` all ask the same question — which
-PortAudio devices can record — so :func:`query_devices` is the only place
-that imports
-``sounddevice`` (lazily, so the parser stays cheap). It has a single failure
-policy: the enumeration is advisory at every call site, so ANY failure — an
-absent ``sounddevice`` (``ImportError``), a missing PortAudio library
-(``OSError``), or anything the query itself raises — degrades to an empty
-result carrying a human-readable ``error``. It never raises: a crashed
-suggestion probe would take down the setup wizard mid-prompt.
-
-Callers keep their own shape through the pure adapters below — a bool for the
-doctor gate, ``(value, label)`` pairs for the setup menu, rendered lines for
-``stenographer devices`` — and decide for themselves whether ``error`` is worth
-reporting or is simply "no suggestions"."""
+The capability gate, ``setup``, the hub pickers, and ``devices`` ask the same
+question: which microphones can record. :func:`query_devices` asks the
+platform once. The listing is advisory at every call site, so it never
+raises on the host: a failure is an empty result that carries a human-readable ``error``.
+The pure adapters below give each caller its own shape.
+"""
 
 from __future__ import annotations
 
-import dataclasses
-from collections.abc import Sequence
+from stenographer.lib.platform import current_platform
+from stenographer.lib.platform.errors import UnsupportedPlatformError
+from stenographer.lib.platform.mic_capture import InputSources
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class DeviceQuery:
-    """Raw PortAudio data: every device, the default input/output pair, or why not."""
-
-    devices: tuple[dict, ...] = ()
-    default_device: tuple[int, ...] | None = None
-    error: str | None = None
-
-
-def query_devices() -> DeviceQuery:
-    """Enumerate PortAudio devices under the module's one failure policy."""
+def query_devices() -> InputSources:
+    """List the microphones of the host, or say why not."""
     try:
-        import sounddevice
-    except (ImportError, OSError) as exc:
-        return DeviceQuery(error=f"audio support unavailable: {exc}")
-    except Exception as exc:
-        # The import starts PortAudio, which raises PortAudioError with no audio server.
-        return DeviceQuery(error=f"audio subsystem unavailable: {exc}")
-
-    try:
-        devices = tuple(sounddevice.query_devices())
-        default_device = tuple(sounddevice.default.device)
-    except sounddevice.PortAudioError as exc:
-        return DeviceQuery(error=f"audio subsystem unavailable: {exc}")
-    except Exception as exc:
-        return DeviceQuery(error=f"audio support unavailable: {exc}")
-    return DeviceQuery(devices=devices, default_device=default_device)
+        return current_platform().input_sources()
+    except UnsupportedPlatformError as exc:
+        return InputSources(error=str(exc))
 
 
-def has_input_device(devices: Sequence[dict]) -> bool:
-    """Pure: whether any enumerated device can record."""
-    return any(device.get("max_input_channels", 0) > 0 for device in devices)
+def mic_issue(query: InputSources) -> str | None:
+    """Pure: why no microphone can record, or ``None``."""
+    if query.error is not None:
+        return query.error
+    if not query.sources:
+        return "no microphone found"
+    return None
 
 
-def input_device_choices(devices: Sequence[dict]) -> list[tuple[str, str]]:
-    """Pure: selectable input devices as ``(value, label)`` pairs, PortAudio index first."""
-    return [
-        (str(index), f"{index}: {device.get('name', '?')}")
-        for index, device in enumerate(devices)
-        if device.get("max_input_channels", 0) > 0
-    ]
+def input_device_choices(query: InputSources) -> list[tuple[str, str]]:
+    """Pure: selectable microphones as ``(value, label)``: the source name and its description."""
+    return [(source.name, source.description) for source in query.sources]

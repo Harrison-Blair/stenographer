@@ -30,6 +30,7 @@ from stenographer.cli.shared.capabilities import (
     missing_required,
     probe,
 )
+from stenographer.lib.audio.device_setting import is_device_index
 from stenographer.lib.diagnostics import additional_checks
 from stenographer.lib.diagnostics.additional_checks import DiagnosticCheck
 from stenographer.lib.transcribe.bark_download import MODEL_NAME
@@ -104,6 +105,20 @@ def _level_of(line: str) -> str:
     return columns[_LEVEL_COLUMN]
 
 
+DEVICE_INDEX_WARNING = (
+    "is a device number from an older version; pick the microphone again "
+    "with `stenographer setup` or in the hub Settings"
+)
+
+
+def device_index_warning(cfg: Config) -> str | None:
+    """Pure: the warning for an ``audio.input_device`` that is a device number, or ``None``."""
+    device = cfg.audio.input_device
+    if not is_device_index(device):
+        return None
+    return f'"{device}" {DEVICE_INDEX_WARNING}'
+
+
 def format_service_status(enabled: str | None, active: str | None, guidance: HostGuidance) -> str:
     """Pure: one-line summary of the host service's state, in the host's words."""
     if enabled is None and active is None:
@@ -154,6 +169,8 @@ def format_required_capabilities(caps: Capabilities, guidance: HostGuidance) -> 
                 if name == "clipboard_ok"
                 else guidance.capability_fix_hints[name]
             )
+            if name == "has_mic" and caps.mic_issue:
+                hint = f"{caps.mic_issue}; {hint}"
             line += f" — {hint}"
         lines.append(line)
     return lines
@@ -182,6 +199,9 @@ def render(
         "",
     ]
     lines.extend(format_required_capabilities(caps, guidance))
+    device_warning = device_index_warning(cfg)
+    if device_warning is not None:
+        lines.append(f"  input device: WARN — {device_warning}")
     player = caps.cue_player or "none (sound cues disabled)"
     lines.append(f"  audio player: {player}")
     service = format_service_status(caps.service_enabled, caps.service_active, guidance)

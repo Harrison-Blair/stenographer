@@ -46,21 +46,14 @@ def apply_capture(record: UtteranceRecord | None, stats: CaptureStats | None) ->
     if stats.first_callback_at is not None:
         record.press_to_callback_ms = (stats.first_callback_at - record.started_at) * 1000
     record.activation_to_callback_ms = stats.activation_to_callback_ms
-    record.max_adc_gap_ms = stats.max_adc_gap_ms
-    record.adc_discontinuities = stats.adc_discontinuities
     record.capture_s = stats.input_frames / stats.input_rate
     record.device_name = stats.device_name
     record.input_rate = stats.input_rate
     record.channels = stats.channels
     record.finalize_ms = stats.finalize_ms
-    record.callback_timing_count = stats.callback_timing_count
     record.callback_count = stats.callback_count
-    record.callback_metadata_dropped = stats.callback_metadata_dropped
-    record.overflow_count = stats.overflow_count
-    record.recovered = stats.recovered
     record.in_frames = stats.input_frames
     record.out_frames = stats.output_frames
-    record.overflow = stats.overflow
     record.capped = stats.capped
 
 
@@ -230,12 +223,9 @@ def summary_fields(record: UtteranceRecord) -> dict[str, object]:
         "activate_ms": _ms(record.activate_ms),
         "press_to_callback_ms": _ms(record.press_to_callback_ms),
         "activation_to_callback_ms": _ms(record.activation_to_callback_ms),
-        "max_adc_gap_ms": _ms(record.max_adc_gap_ms),
-        "adc_discontinuities": record.adc_discontinuities,
         "capture_s": _seconds(record.capture_s),
         "in_frames": record.in_frames,
         "out_frames": record.out_frames,
-        "overflow": _flag(record.overflow),
         "capped": _flag(record.capped),
         "peak_rms": None if record.peak_rms is None else round(record.peak_rms, 6),
         "cold": _flag(record.cold),
@@ -270,9 +260,9 @@ def log_summary(record: UtteranceRecord) -> None:
 def downmix(samples: np.ndarray) -> np.ndarray:
     """Reduce a 2-D capture to mono by keeping channel 0. PURE.
 
-    Channel 0, not the channel mean: that is what the PortAudio callback keeps,
-    and averaging a stereo mic whose second channel is silent or out of phase
-    halves or cancels the speech the VAD then has to find.
+    Channel 0, not the channel mean: averaging a stereo mic whose second
+    channel is silent or out of phase halves or cancels the speech the VAD
+    then has to find.
     """
     if samples.ndim != 2:
         return samples.reshape(-1)

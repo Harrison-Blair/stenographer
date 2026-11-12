@@ -26,7 +26,7 @@ def test_probe_keeps_the_host_facts_and_gates_on_the_model_cache_not_the_overlay
     monkeypatch.setattr(
         capabilities, "current_platform", lambda: SimpleNamespace(probe_host=lambda: host)
     )
-    monkeypatch.setattr(capabilities, "_has_mic", lambda: True)
+    monkeypatch.setattr(capabilities, "_mic_issue", lambda: None)
     overlay_args = []
 
     def probe_overlay(enabled):
@@ -55,27 +55,39 @@ def test_probe_keeps_the_host_facts_and_gates_on_the_model_cache_not_the_overlay
     assert result.overlay.backend is Backend.LAYER_SHELL
 
 
-def test_the_microphone_gate_reads_the_shared_device_enumeration(monkeypatch):
-    # One enumeration answers the whole program; the gate is the pure reading
-    # of it, so a host with only output devices must fail the gate.
+def test_the_microphone_gate_reads_the_shared_source_listing(monkeypatch):
+    # One listing answers the whole program; the gate is the pure reading of it,
+    # so a missing tool or a host with no microphone fails the gate with its reason.
     from stenographer.lib.audio import probe as audio_probe
-    from stenographer.lib.audio.probe import DeviceQuery
+    from stenographer.lib.platform.mic_capture import InputSource, InputSources
 
-    outputs_only = DeviceQuery(
-        devices=({"name": "speakers", "max_input_channels": 0},), default_device=(None, 0)
+    monkeypatch.setattr(capabilities, "current_platform", lambda: SimpleNamespace(probe_host=_host))
+    monkeypatch.setattr(
+        capabilities, "probe_overlay", lambda _enabled: OverlayCapability.disabled()
     )
-    monkeypatch.setattr(audio_probe, "query_devices", lambda: outputs_only)
-    assert capabilities._has_mic() is False
+    monkeypatch.setattr(bark_download, "is_model_cached", lambda: True)
+    cases = [
+        (InputSources(error="pw-record is not installed"), False, "pw-record is not installed"),
+        (InputSources(), False, "no microphone found"),
+        (InputSources(sources=(InputSource("mic", "USB mic"),)), True, None),
+    ]
+    for query, has_mic, issue in cases:
+        monkeypatch.setattr(audio_probe, "query_devices", lambda query=query: query)
+        result = capabilities.probe(Config.defaults())
+        assert (result.has_mic, result.mic_issue) == (has_mic, issue)
 
-    with_input = DeviceQuery(
-        devices=(
-            {"name": "speakers", "max_input_channels": 0},
-            {"name": "usb mic", "max_input_channels": 2},
-        ),
-        default_device=(1, 0),
+
+def _host() -> HostProbe:
+    return HostProbe(
+        key_injector_ok=True,
+        hotkey_access_ok=True,
+        clipboard_ok=True,
+        clipboard_backend="test-clipboard",
+        clipboard_read_ok=True,
+        cue_player=None,
+        service_enabled=None,
+        service_active=None,
     )
-    monkeypatch.setattr(audio_probe, "query_devices", lambda: with_input)
-    assert capabilities._has_mic() is True
 
 
 def test_only_the_absent_required_capabilities_are_named():

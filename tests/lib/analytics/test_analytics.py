@@ -167,6 +167,34 @@ def test_filters_exports_and_file_source_separation(tmp_path):
     assert len(store.records()) == 1
 
 
+def test_rows_with_retired_capture_metrics_still_load_report_and_export(tmp_path):
+    # Older versions stored PortAudio capture fields that are no longer metrics.
+    path = tmp_path / "analytics.db"
+    store = Store(path)
+    store.write_checkpoint(checkpoint(phase="terminal", outcome="delivered", recognized_words=3))
+    retired = {
+        "recognized_words": 3,
+        "overflow": True,
+        "overflow_count": 2,
+        "max_adc_gap_ms": 1.5,
+        "adc_discontinuities": 1,
+        "callback_timing_count": 10,
+        "callback_metadata_dropped": 0,
+        "recovered": False,
+    }
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute("UPDATE utterances SET metrics=?", (json.dumps(retired),))
+
+    reopened = Store(path)
+    assert reopened.records()[0]["metrics"] == retired
+    report = reopened.report()
+    assert report["totals"]["recognized_words"] == 3
+    assert "overflow_count" not in report["metrics"]
+    assert json.loads(reopened.export_json())["records"][0]["metrics"]["overflow_count"] == 2
+    rows = list(csv.DictReader(io.StringIO(reopened.export_csv())))
+    assert rows[0]["max_adc_gap_ms"] == "1.5"
+
+
 def test_unfinished_work_requires_liveness_evidence_and_survives_reopen(tmp_path):
     path = tmp_path / "analytics.db"
     Store(path).write_checkpoint(checkpoint(recognized_words=7))

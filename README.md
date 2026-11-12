@@ -59,7 +59,8 @@ see [docs/building.md](docs/building.md).
 
 You need Linux, Wayland, a systemd user manager, and:
 
-- A PortAudio-backed microphone and the system PortAudio library.
+- PipeWire with `pw-record` and `pactl` (on Ubuntu: `pipewire-bin` and
+  `pulseaudio-utils`), and a microphone.
 - Read access to `/dev/input/event*`, normally through the `input` group.
 - Write access to `/dev/uinput`, through a udev rule or `uinput` group.
 - `wl-copy` from `wl-clipboard` (or `xclip` plus XWayland). `wl-paste`, also
@@ -204,7 +205,7 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   Defaults dialogs. See the [terminal hub guide](docs/hub.md) for all screens, controls,
   and file formats.
 - `stenographer doctor` — check capabilities and print fixes.
-- `stenographer devices` — list audio input devices.
+- `stenographer devices` — list the PipeWire microphones (source name and description).
 - `stenographer sounds [PACK]` — list, preview, or select sound feedback.
 - `stenographer stats` — view, export, or delete local numeric statistics; the summary defaults to hotkey dictations (`--source all` includes file transcriptions).
 - `stenographer transcribe FILE [--raw] [--refine]` — transcribe an audio file; `--raw` skips refinement even when `--refine` is supplied.

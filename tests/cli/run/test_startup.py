@@ -45,12 +45,11 @@ def test_startup_gate_ignores_optional_capabilities_and_reuses_backend():
     assert caps.clipboard_backend == "x11"
 
 
-def test_run_prepares_the_recorder(monkeypatch, tmp_path):
-    # A real Daemon: preparation sits behind a handler that only logs a failure,
-    # so a wrong accessor would otherwise leave startup looking healthy.
+def test_run_opens_no_microphone_before_a_press(monkeypatch, tmp_path):
+    # Dictation starts its capture at the key press: startup holds no microphone.
     daemon = _daemon()
     prepared: list[bool] = []
-    daemon._recorder.prepare = lambda: prepared.append(True)
+    daemon._recorder.start = lambda: prepared.append(True)
     daemon.run = lambda: None
     host = SimpleNamespace(
         single_instance_lock=lambda: SimpleNamespace(acquire=lambda: True, release=lambda: None),
@@ -70,4 +69,4 @@ def test_run_prepares_the_recorder(monkeypatch, tmp_path):
 
     assert startup.run(cfg) == 0
 
-    assert prepared == [True]
+    assert prepared == []

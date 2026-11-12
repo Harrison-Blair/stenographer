@@ -134,7 +134,8 @@ of the next recording; a source that is off shows `off · press m to enable` (or
 `s`). System audio captures the current output mix, not separate applications.
 
 Press `d` (or click `[d] change device…`) while no recording runs to choose the
-input device. The dialog lists each input device and `Settings default`. A
+input device. The dialog lists each PipeWire microphone by its description, and
+`Settings default`. A
 chosen device that is gone shows as `unavailable` and stays selected until you
 choose another row. The choice shows in the MIC meter and applies to the next
 recordings until the hub quits. It does not change `config.toml`; the Audio tab
@@ -152,7 +153,9 @@ scroll to the bottom to follow new lines again.
 The speaker bar lists each speaker that has transcript lines, with its talk time.
 The row wraps between speakers when it runs out of room. Each speaker shows as
 text, so it does not depend on colour. The end of the bar shows the count of failed
-phrases when there are any, `! mic audio not saved` when a source's audio
+phrases when there are any, `! mic stopped` (or `! system stopped`) when the capture of
+a source failed, `! mic no audio` (or `! system no audio`) while a
+running source has delivered no audio for 5 seconds, `! mic audio not saved` when a source's audio
 cannot be written, and a notice when lines get no speaker label (see
 [Speaker labels](#speaker-labels)). `[r] Rename…` sits in the transcript title row. After such a failure the source keeps
 transcribing, its audio file ends at the failure, and the recording still saves
@@ -160,6 +163,18 @@ its transcript. Press `r` (or click `[r] Rename…`) to open the Rename speaker 
 choose the speaker, type the new name, and press `enter` (or click `[enter] Rename`); `escape` cancels. During a recording, the
 rename changes the live labels. On a saved session, the rename writes a new
 transcript revision of that session.
+
+Both sources record through a `pw-record` child process. A source that delivers
+no audio for 5 seconds while it runs shows `! mic no audio` or
+`! system no audio`, and the log gets one `live: source_silent` warning. Nothing
+restarts: the line goes away when audio arrives again. When the capture process
+of a source exits or cannot start, for example because a named microphone is
+unplugged or absent, that source turns off, Record shows `! mic stopped` or
+`! system stopped`, the log gets `live: mic_source_failed` or
+`live: system_source_failed`, and the other source keeps recording. Nothing
+restarts. The line shows exactly while the source is off because its capture
+failed and you have not pressed its key (`m` or `s`) since; stopping the
+recording clears it.
 
 ### Prepare the models
 
@@ -478,7 +493,7 @@ its current settings.
 | Restore delay | `delivery.restore_delay_ms` | The wait, in milliseconds, before the clipboard is restored. |
 | Usage history | `analytics.enabled` | Stores local numeric usage history of dictation and `stenographer transcribe`. No audio or transcript text is stored. |
 | Resource profiling | `analytics.resource_profiling` | With Usage history on, measures local resource use during utterances. |
-| Microphone | `audio.input_device` | The audio input device name or index for dictation and Record. Blank uses the default. Record's `d` key can choose another device for its next recording. |
+| Microphone | `audio.input_device` | The PipeWire source name for dictation and Record; the picker lists each microphone by its description. Blank, `pipewire`, `default`, `pulse`, or a number uses the default microphone. Record's `d` key can choose another device for its next recording. |
 | Longest recording | `audio.max_recording_seconds` | The maximum length of one hotkey dictation. It does not limit Record. |
 | Meter floor dBFS | `feedback.spectrum_floor_dbfs` | The floor of the Record meters and the dictation overlay in dBFS: one fixed value, or one value per band. |
 | Idle unload | `asr.idle_unload_seconds` | The seconds before the idle speech worker unloads, and how long Ollama keeps the refine model loaded when idle. Zero never unloads either one. |
@@ -499,7 +514,7 @@ former Doctor and Setup sections. The checks are grouped:
 
 | Group | Checks |
 | --- | --- |
-| input | input access, microphone, hotkey, sounds |
+| input | input access, microphone, input device, hotkey, sounds |
 | engine | speech model, refine service, system audio, system service |
 | other | each other doctor check, such as ffmpeg, the clipboard, and the overlay |
 
@@ -532,7 +547,10 @@ no transcript text.
 
 A test result stays with its check, including while it is running. Defaults warns before discarding unsaved settings. Unreadable warning logs are identified in Checks and the copied report.
 
-The microphone test lists the input devices and does not capture audio. The
+The microphone test lists the PipeWire microphones and does not capture audio.
+The microphone check fails when `pw-record` or `pactl` is missing or no
+microphone is found. The input device check warns when `audio.input_device` is
+a number from an older version; pick the microphone again. The
 sound test plays the preview of the sound pack. The hub does not start or
 restart the system service.
 

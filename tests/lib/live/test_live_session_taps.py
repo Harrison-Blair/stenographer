@@ -70,7 +70,7 @@ def test_block_listener_gets_read_only_copies_after_the_write(monkeypatch, tmp_p
     rig.session.add_block_listener(lambda _source, _samples: mutated.wait(2))
     rig.session.add_block_listener(listener)
     block = np.asarray([3.0, 0.5], dtype=np.float32)
-    rig.recorder.on_block(block, 16000, 1)
+    rig.recorder.on_block(block)
     block[:] = 9.0
     mutated.set()
     rig.system.emit(4)
