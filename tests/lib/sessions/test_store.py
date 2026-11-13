@@ -13,6 +13,7 @@ import pytest
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionNotFoundError, SessionStore, export_transcript
+from tests.lib.sessions.helpers import write_unknown_length_flac
 
 
 def _line(start: float, end: float, speaker_id: str, label: str, text: str) -> TranscriptLine:
@@ -226,6 +227,24 @@ def test_partial_session_is_listed_and_read_without_crashing(tmp_path):
     assert sessions[0].interrupted
     assert detail.summary.interrupted
     assert len(detail.lines) == 1
+
+
+def test_a_track_of_unknown_length_adds_no_duration_and_keeps_its_size(tmp_path):
+    # system.flac has an unknown length.
+    writer = SessionWriter.open(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    writer.write_audio("mic", np.full(48000, 0.25, dtype=np.float32))
+    writer.append_line(_line(0.0, 2.0, "you", "You", "placeholder"))
+    writer.close()
+    write_unknown_length_flac(writer.path / "system.flac")
+    store = SessionStore(tmp_path / "sessions")
+
+    summary = store.read(writer.path.name).summary
+
+    assert summary.duration_seconds == 3.0
+    assert not summary.interrupted
+    assert summary.audio_size_bytes == sum(
+        (writer.path / name).stat().st_size for name in ("mic.flac", "system.flac")
+    )
 
 
 def test_mic_diarization_flag_survives_revisions_and_old_sessions_read_false(tmp_path):

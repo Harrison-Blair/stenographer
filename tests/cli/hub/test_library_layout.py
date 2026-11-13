@@ -5,7 +5,9 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import numpy as np
 import pytest
+import soundfile as sf
 from textual.widgets import Input
 
 from stenographer.cli.hub.dialogs import QuitConfirm
@@ -21,6 +23,7 @@ from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionStore
 from tests.cli.hub.support import _layout_problems, _screen_text, make_app
 from tests.cli.hub.test_library import FakeJob, FakeServices, _library, _until
+from tests.lib.sessions.helpers import write_unknown_length_flac
 
 pytestmark = pytest.mark.usefixtures("utc")
 
@@ -257,6 +260,30 @@ async def test_the_open_session_fits_every_size(tmp_path, case, size):
         await _settle(pilot, app)
         assert _layout_problems(app) == []
         app.services.title_request.release.set()
+
+
+@pytest.mark.parametrize("size", [(120, 35), (60, 16)], ids=lambda size: f"{size[0]}x{size[1]}")
+async def test_a_track_of_unknown_length_shows_the_real_duration(tmp_path, size):
+    # system.flac has an unknown length.
+    session = tmp_path / "sessions" / _write_session(tmp_path, 0)
+    sf.write(session / "mic.flac", np.zeros(16000, dtype=np.float32), 16000, format="FLAC")
+    write_unknown_length_flac(session / "system.flac")
+    app = make_app(tmp_path, FakeServices(tmp_path / "sessions"))
+    async with app.run_test(size=size) as pilot:
+        await _show_table(pilot, app, 1)
+        assert _layout_problems(app) == []
+        # The last transcript line ends at 239 s; the entry is two lines tall.
+        table = app.screen.query_one("#library-list")
+        screen = _screen_text(app).splitlines()
+        rows = [line for line in screen[table.region.y : table.region.bottom] if line.strip("│ ")]
+        assert len(rows) == 2, rows
+        assert "3:59" in rows[0] and "interrupted" not in rows[0], rows
+        await pilot.press("enter")
+        await _settle(pilot, app)
+        assert _layout_problems(app) == []
+        meta = app.screen.query_one("#library-session-meta")
+        assert meta.region.height == 1
+        assert "3:59" in meta.render().plain
 
 
 async def _open_title(pilot, app):

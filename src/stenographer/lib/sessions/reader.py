@@ -23,6 +23,10 @@ _SOURCE_FILE = re.compile(r"source\.[A-Za-z0-9]{1,8}\Z")
 _TITLE_SOURCES = frozenset({"model", "user"})
 _AUDIO_SOURCES = ("mic", "system")
 _SOURCE_ORDER = {"mic": 0, "system": 1}
+# libsndfile gives SF_COUNT_MAX (INT64_MAX) as the frame count of a FLAC file of unknown
+# length. The recorder leaves such a file when a write fails or when it ends before it
+# closes the file.
+UNKNOWN_FRAMES = 2**63 - 1
 
 
 def session_started_at(session_id: str) -> datetime | None:
@@ -276,7 +280,8 @@ def read_session(directory: Path, session_id: str) -> SessionDetail:
                 interrupted = True
             continue
         frames, sample_rate = audio_info
-        durations.append(frames / sample_rate)
+        if frames != UNKNOWN_FRAMES:
+            durations.append(frames / sample_rate)
         try:
             audio_sizes += audio_path.stat().st_size
         except OSError:
