@@ -339,7 +339,8 @@ second line, and a longer title ends with `…`. A recording without a title sho
 file job without a title shows the name of its file.
 
 The `state` cell of the wide tier shows a word: the label state (`live`,
-`relabeled`, or a revision method such as `rename` or `re-transcribe`),
+`relabeled`, or a revision method such as `rename` or `re-transcribe`; a
+revision that a file job wrote also shows `re-transcribe`),
 `! interrupted` when the recording stopped without a clean save, `× failed` for
 a failed file job, or the work that changes the entry. A file job shows
 `transcribe`; a file job that writes a new revision of a listed session shows

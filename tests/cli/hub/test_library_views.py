@@ -725,3 +725,118 @@ async def test_the_open_session_shows_the_state_word_of_the_wide_table(tmp_path)
         head = _meta(app)
         # A file session whose speaker pass ran has live labels: the state slot says so.
         assert head.split(" · ")[0].strip() == "live", head
+
+
+class _HeldPlayAudio:
+    """A play preparation that waits until the test releases it."""
+
+    def __init__(self, path):
+        self.path = path
+        self.preparing = threading.Event()
+        self.release = threading.Event()
+
+    def write_play_audio(self, session_id):
+        self.preparing.set()
+        assert self.release.wait(5), "the test did not release the preparation"
+        self.path.write_bytes(b"")
+        return self.path
+
+
+async def test_a_delete_during_the_play_preparation_stops_that_player(tmp_path, monkeypatch):
+    players: list[FakePlayer] = []
+
+    def start_player(command):
+        players.append(FakePlayer())
+        return players[-1]
+
+    app, services, _clock, session = _player_app(tmp_path, monkeypatch, start_player)
+    held = _HeldPlayAudio(tmp_path / "play.wav")
+    services._session_jobs = held
+    try:
+        async with app.run_test(size=(120, 35)) as pilot:
+            await _open(pilot, app, 1)
+            await pilot.press("p")
+            await asyncio.to_thread(held.preparing.wait, 5)
+            await pilot.press("delete")
+            await _until(pilot, lambda: isinstance(app.screen, QuitConfirm))
+            await pilot.press("y")
+            await pilot.pause(0.1)
+            # The delete waits for the preparation; the session is still there.
+            assert (tmp_path / "sessions" / session).exists()
+            held.release.set()
+            await _until(pilot, lambda: not (tmp_path / "sessions" / session).exists())
+            assert len(players) == 1 and players[0].terminated
+            assert services.session_playback() is None
+    finally:
+        held.release.set()
+        services.stop_session_playback()
+
+
+async def test_a_delete_of_another_session_leaves_the_player_alone(tmp_path, monkeypatch):
+    players: list[FakePlayer] = []
+
+    def start_player(command):
+        players.append(FakePlayer())
+        return players[-1]
+
+    app, services, _clock, playing = _player_app(tmp_path, monkeypatch, start_player)
+    other = _write_rec(tmp_path / "sessions", REC_LIVE - timedelta(days=1)).name
+    try:
+        async with app.run_test(size=(120, 35)) as pilot:
+            await _open(pilot, app, 2)
+            await pilot.press("p")
+            await _until(pilot, lambda: services.session_playback() is not None)
+            assert services.session_playback()[0] == playing
+            app.library_screen.select_entry(other)
+            await pilot.press("delete")
+            await _until(pilot, lambda: isinstance(app.screen, QuitConfirm))
+            await pilot.press("y")
+            await _until(pilot, lambda: not (tmp_path / "sessions" / other).exists())
+            assert not players[0].terminated
+            assert services.session_playback()[0] == playing
+    finally:
+        services.stop_session_playback()
+
+
+def test_an_ended_player_is_not_reported_while_the_next_play_is_prepared(tmp_path, monkeypatch):
+    _app, services, _clock, session = _player_app(tmp_path, monkeypatch, lambda c: FakePlayer())
+    ended = FakePlayer()
+    ended.finished.set()
+    # The player ended, and its watcher has not run yet.
+    services._player = ended
+    services._player_session_id = "20261001T000000Z"
+    services._playing = ("20261001T000000Z", 0.0)
+    held = _HeldPlayAudio(tmp_path / "play.wav")
+    services._session_jobs = held
+    toggle = threading.Thread(target=services.toggle_session_playback, args=(session,))
+    toggle.start()
+    try:
+        assert held.preparing.wait(5)
+        assert services.session_playback() is None
+    finally:
+        held.release.set()
+        toggle.join(5)
+    assert services.session_playback()[0] == session
+    services.stop_session_playback()
+
+
+async def test_a_file_transcribe_revision_shows_re_transcribe_in_both_views(tmp_path):
+    root = tmp_path / "sessions"
+    session = _write_rec(root, REC_LIVE).name
+    store = SessionStore(root)
+    detail = store.read(session)
+    store.write_revision(
+        session, detail.lines, method="file-transcribe", expected_revision=detail.revision
+    )
+    app = make_app(tmp_path, FakeServices(root))
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _open(pilot, app, 1)
+        row = _line_of(app, f"{REC_LIVE.astimezone():%d %b %H:%M}")
+        assert row.rstrip(" │").endswith("re-transcribe"), row
+        assert "file-transcri" not in _screen_text(app)
+        width = len(row)
+        await pilot.press("enter")
+        await _settle(pilot, app)
+        head = _meta(app)
+        assert head.split(" · ")[0].strip() == "re-transcribe", head
+        assert len(_line_of(app, "[esc] ← Library")) == width

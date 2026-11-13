@@ -256,6 +256,11 @@ class HubServices:
             same_session = self._player_session_id == session_id
             if self._stop_player_locked() and same_session:
                 return
+            # A player that ended by itself and whose watcher has not run yet must not
+            # show as playing while the next play is prepared.
+            self._player = None
+            self._player_session_id = None
+            self._playing = None
             if self._player_temp_path is not None:
                 self._player_temp_path.unlink(missing_ok=True)
                 self._player_temp_path = None
@@ -286,9 +291,15 @@ class HubServices:
             return None
         return playing[0], self._clock() - playing[1]
 
-    def stop_session_playback(self) -> None:
+    def stop_session_playback(self, session_id: str | None = None) -> None:
+        """Stop the player; with ``session_id``, only when it plays that session.
+
+        The lock makes the call wait for a play preparation in progress, so a player
+        that starts for ``session_id`` during the call is stopped too.
+        """
         with self._player_lock:
-            self._stop_player_locked()
+            if session_id is None or self._player_session_id == session_id:
+                self._stop_player_locked()
 
     def _stop_player_locked(self) -> bool:
         """Terminate a running player; return whether one ran."""

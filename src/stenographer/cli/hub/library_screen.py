@@ -511,6 +511,9 @@ class LibraryScreen(HubScreen):
             return Text(work, style=_WARN)
         if summary.interrupted:
             return Text("! interrupted", style=_DANGER)
+        # A Transcribe a file job on the saved audio of a session stores this method.
+        if summary.label_state == "file-transcribe":
+            return Text("re-transcribe")
         return Text(summary.label_state)
 
     @staticmethod
@@ -1289,11 +1292,7 @@ class LibraryScreen(HubScreen):
 
     def _delete_session(self, session_id: str) -> None:
         """Stop the player of this session, then delete it; runs off the event loop."""
-        services = self.app.services
-        playback = getattr(services, "session_playback", None)
-        playing = playback() if playback is not None else None
-        if playing is not None and playing[0] == session_id:
-            services.stop_session_playback()
+        self.app.services.stop_session_playback(session_id)
         self.store.delete(session_id)
 
     # Transcript scroll

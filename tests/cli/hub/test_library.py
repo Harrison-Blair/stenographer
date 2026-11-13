@@ -91,6 +91,9 @@ class FakeServices:
         self.actions.append(("cancel", job.id))
         return job.cancel()
 
+    def stop_session_playback(self, session_id=None):
+        self.actions.append(("stop", session_id))
+
     def toggle_session_playback(self, session_id, on_failure=None):
         self.actions.append(("play", session_id))
         if self.player_exit_status is not None:
