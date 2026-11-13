@@ -223,7 +223,10 @@ unplugged or absent, that source turns off, Record shows `! mic stopped` or
 `live: system_source_failed`, and the other source keeps recording. Nothing
 restarts. The line shows exactly while the source is off because its capture
 failed and you have not pressed its key (`m` or `s`) since; stopping the
-recording clears it.
+recording clears it. A sample that `pw-record` delivers as NaN or infinity
+becomes silence (0.0), so the audio file keeps recording; when such a capture
+ends, the log gets one `capture: non_finite_samples_replaced` warning with the
+source and the count. Dictation reads the microphone the same way.
 
 ### Prepare the models
 
@@ -374,8 +377,15 @@ The open session shows its state, date, duration, kind, and size, the title,
 each speaker's talk time, the action buttons, and the transcript. While a player
 runs, the Play button shows `■ Stop` and the position in the session, for
 example `■ Stop 00:04:12 / 00:30:00`; the narrow tier shows no position. Buttons
-that do not fit the width hide; their keys still act. The action keys act on
-the selected entry in the table and in the open session:
+that do not fit the width hide; their keys still act.
+
+A saved session opens at the first line of its transcript, each time you open
+it. A file job that still runs opens at its newest line and follows new lines
+while the view is at the bottom, as Record does. When that job finishes while it
+is open, its saved session keeps the scroll position. A new title, a rename, or
+a new revision from re-diarize or re-transcribe also keeps the scroll position.
+
+The action keys act on the selected entry in the table and in the open session:
 
 | Key | Action |
 | --- | --- |

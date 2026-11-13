@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import threading
 import time
@@ -12,6 +13,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from stenographer.lib.audio.recorder import Recorder
 from stenographer.lib.platform.errors import MicCaptureError
 from stenographer.lib.platform.linux.mic_capture import (
     LinuxMicCapture,
@@ -38,7 +40,10 @@ if os.environ.get('PW_TARGET_NOT_FOUND') == '1':
     raise SystemExit(1)
 encoding = int(os.environ.get('PW_AU_ENCODING', '6'))
 sys.stdout.buffer.write(b'.snd' + struct.pack('>5I', 24, 0xFFFFFFFF, encoding, 16000, 1))
-sys.stdout.buffer.write(struct.pack('>700f', 0.25, -0.5, *([0.0] * 698)))
+values = [0.25, -0.5, *([0.0] * 698)]
+if os.environ.get('PW_NON_FINITE') == '1':
+    values[2:6] = [float('nan'), 0.125, float('inf'), float('-inf')]
+sys.stdout.buffer.write(struct.pack('>700f', *values))
 sys.stdout.buffer.flush()
 if os.environ.get('PW_EXIT_EARLY') == '1':
     raise SystemExit(1)
@@ -73,6 +78,7 @@ def _install(tmp_path: Path, monkeypatch, *, early_exit: bool = False) -> Path:
     pactl.chmod(0o755)
     monkeypatch.setenv("PATH", str(bin_dir))
     monkeypatch.setenv("PW_CAPTURE_ARGS", str(tmp_path / "args.txt"))
+    monkeypatch.delenv("PW_NON_FINITE", raising=False)
     if early_exit:
         monkeypatch.setenv("PW_EXIT_EARLY", "1")
     else:
@@ -229,3 +235,82 @@ def test_input_sources_names_a_missing_tool(tmp_path, monkeypatch, missing):
     (tmp_path / "bin" / missing).unlink()
 
     assert input_sources().error == f"{missing} is not installed"
+
+
+def _capture_one_block(capture: LinuxMicCapture) -> np.ndarray:
+    """Start *capture*, wait for its first full block, stop it, and return the audio."""
+    blocks: list[np.ndarray] = []
+    got = threading.Event()
+
+    def receive(item):
+        assert isinstance(item, np.ndarray)
+        blocks.append(item)
+        got.set()
+
+    capture.start(None, receive)
+    try:
+        assert got.wait(timeout=2)
+    finally:
+        capture.stop()
+    return np.concatenate(blocks)
+
+
+@pytest.mark.parametrize(("non_finite", "warnings"), [(True, 1), (False, 0)])
+def test_a_capture_logs_one_warning_with_the_count_of_replaced_samples(
+    tmp_path, monkeypatch, caplog, non_finite, warnings
+):
+    _install(tmp_path, monkeypatch)
+    if non_finite:
+        monkeypatch.setenv("PW_NON_FINITE", "1")
+
+    with caplog.at_level(logging.WARNING, logger="stenographer.lib.platform.linux.pw_record"):
+        audio = _capture_one_block(LinuxMicCapture())
+
+    assert audio[:6].tolist() == (
+        [0.25, -0.5, 0.0, 0.125, 0.0, 0.0] if non_finite else [0.25, -0.5, 0.0, 0.0, 0.0, 0.0]
+    )
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages == ["capture: non_finite_samples_replaced source=mic count=3"] * warnings
+
+
+def test_a_child_that_exits_after_a_nan_sample_still_logs_one_warning(
+    tmp_path, monkeypatch, caplog
+):
+    _install(tmp_path, monkeypatch, early_exit=True)
+    monkeypatch.setenv("PW_NON_FINITE", "1")
+    capture = LinuxMicCapture()
+    items: list[np.ndarray | MicCaptureError] = []
+
+    with caplog.at_level(logging.WARNING, logger="stenographer.lib.platform.linux.pw_record"):
+        capture.start(None, items.append)
+        try:
+            capture._thread.join(timeout=5)
+            assert not capture._thread.is_alive()
+        finally:
+            capture.stop()
+
+    assert isinstance(items[-1], MicCaptureError)
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages == ["capture: non_finite_samples_replaced source=mic count=3"]
+
+
+def test_the_dictation_recorder_gets_finite_samples_from_the_real_capture(tmp_path, monkeypatch):
+    _install(tmp_path, monkeypatch)
+    monkeypatch.setenv("PW_NON_FINITE", "1")
+    frames = threading.Event()
+    recorder = Recorder(
+        capture_factory=LinuxMicCapture,
+        device=None,
+        max_seconds=10,
+        on_block=lambda block, *_: frames.set(),
+    )
+
+    recorder.start()
+    try:
+        assert frames.wait(timeout=2)
+        audio = recorder.stop()
+    finally:
+        recorder.close()
+
+    assert audio[:6].tolist() == [0.25, -0.5, 0.0, 0.125, 0.0, 0.0]
+    assert np.isfinite(audio).all()

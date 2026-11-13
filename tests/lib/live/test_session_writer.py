@@ -15,6 +15,7 @@ import soundfile
 
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
+from stenographer.lib.platform.linux.pw_record import PwRecordDecoder
 
 _STARTED = datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC)
 _WALL = "2026-03-02T04:05:07+00:00"
@@ -224,3 +225,21 @@ def test_a_failed_rename_write_leaves_the_name_out_of_the_markdown(tmp_path):
     markdown = (writer.path / "transcript.md").read_text(encoding="utf-8")
     assert "Speaker 1" in markdown
     assert "Alice" not in markdown
+
+
+def test_a_decoded_block_from_bytes_with_a_nan_is_saved_and_a_later_write_succeeds(tmp_path):
+    first = np.array([0.25, np.nan, -0.5, *([0.0] * 509)], dtype="<f4")
+    second = np.full(512, 0.125, dtype=np.float32)
+    decoder = PwRecordDecoder()
+    [block] = decoder.feed(first.tobytes())
+    writer = _open_writer(tmp_path)
+
+    writer.write_audio("system", block)
+    writer.write_audio("system", second)
+    writer.close()
+
+    audio, rate = soundfile.read(writer.path / "system.flac", dtype="float32")
+    assert rate == 16000
+    assert audio.size == 1024
+    np.testing.assert_allclose(audio[:3], [0.25, 0.0, -0.5], atol=1e-6)
+    np.testing.assert_allclose(audio[512:], 0.125, atol=1e-6)

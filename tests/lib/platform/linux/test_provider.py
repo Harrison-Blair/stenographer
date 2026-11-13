@@ -18,6 +18,7 @@ import pytest
 from stenographer.lib.hotkey.errors import BindingCaptureError
 from stenographer.lib.platform.host_guidance import HostGuidance
 from stenographer.lib.platform.host_probe import HostProbe
+from stenographer.lib.platform.linux import binding_capture as binding_capture_module
 from stenographer.lib.platform.linux.cues import LinuxCuePlayer
 from stenographer.lib.platform.linux.evdev_key_table import EvdevKeyTable
 from stenographer.lib.platform.linux.hotkey import EvdevHotkeyListener
@@ -47,13 +48,13 @@ def test_provider_builds_an_evdev_listener_without_touching_a_device():
     assert listener.is_running is False
 
 
-def test_provider_reports_an_unopenable_capture_device_in_setup_vocabulary():
-    # An explicit path that does not exist never reaches a real device, and the
+def test_provider_reports_an_unopenable_capture_device_in_setup_vocabulary(monkeypatch):
+    # A detected path that does not exist never reaches a real device, and the
     # failure has to arrive as the setup flow's own error, not as OSError.
-    with pytest.raises(BindingCaptureError, match="could not open hotkey device"):
-        LinuxPlatform().capture_binding(
-            io.StringIO(), "/dev/input/stenographer-nonexistent", timeout=0.1
-        )
+    missing = "/dev/input/stenographer-nonexistent"
+    monkeypatch.setattr(binding_capture_module, "auto_detect_paths", lambda: [missing])
+    with pytest.raises(BindingCaptureError, match=f"could not open hotkey device {missing}"):
+        LinuxPlatform().capture_binding(io.StringIO(), timeout=0.1)
 
 
 def test_provider_builds_the_output_backends():

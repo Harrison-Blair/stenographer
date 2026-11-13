@@ -751,8 +751,8 @@ def binding_capture(monkeypatch):
         pending = list(results)
         calls: list[tuple] = []
 
-        def capture(stdin, device, *, timeout):
-            calls.append((stdin, device, timeout))
+        def capture(stdin, *, timeout):
+            calls.append((stdin, timeout))
             outcome = pending.pop(0)
             if isinstance(outcome, Exception):
                 raise outcome
@@ -773,7 +773,7 @@ def test_setup_captures_from_its_stdin_on_every_keyboard_with_the_15_second_time
 
     setup._capture_or_choose_binding(console, "KEY_RIGHTCTRL", new_config=True)
 
-    assert calls == [(console.stdin, None, 15.0)]
+    assert calls == [(console.stdin, 15.0)]
 
 
 def test_a_captured_binding_is_offered_for_confirmation(binding_capture):

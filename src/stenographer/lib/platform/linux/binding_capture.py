@@ -57,15 +57,14 @@ def _quiet_terminal(stdin: TextIO) -> Iterator[None]:
         termios.tcsetattr(fd, termios.TCSANOW, original)
 
 
-def capture_binding(stdin: TextIO, device_path: str | None, *, timeout: float) -> str:
-    """Capture one key/chord from an explicit device or auto-detected keyboards.
+def capture_binding(stdin: TextIO, *, timeout: float) -> str:
+    """Capture one key/chord from the auto-detected keyboards.
 
     Devices are observed without grabbing them. Terminal echo and canonical input
     are disabled only for the capture window; ``ISIG`` remains untouched so Ctrl-C
     continues to raise ``KeyboardInterrupt``.
     """
-    paths = [device_path] if device_path is not None else auto_detect_paths()
-    return _capture_paths(stdin, paths, timeout=timeout)
+    return _capture_paths(stdin, auto_detect_paths(), timeout=timeout)
 
 
 def _capture_paths(stdin: TextIO, paths: Sequence[str], *, timeout: float) -> str:

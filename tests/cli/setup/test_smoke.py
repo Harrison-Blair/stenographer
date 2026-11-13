@@ -26,6 +26,7 @@ from stenographer.cli.shared.terminal import restart_service
 from stenographer.lib.config.models import Config
 from stenographer.lib.contracts.constants import SPECTRUM_BANDS
 from stenographer.lib.platform import current_platform
+from stenographer.lib.platform.linux import binding_capture as binding_capture_module
 from stenographer.lib.transcribe import bark_download
 from stenographer.overlay.spectrum.calibration import calibrate_spectrum_profile
 
@@ -43,7 +44,7 @@ def _open_binding_uinput() -> evdev.UInput:
         pytest.skip(f"/dev/uinput not usable: {exc}")
 
 
-def test_live_binding_capture_uses_real_uinput_and_restores_pty():
+def test_live_binding_capture_uses_real_uinput_and_restores_pty(monkeypatch):
     ui = _open_binding_uinput()
     node = ui.device.path
     try:
@@ -52,6 +53,9 @@ def test_live_binding_capture_uses_real_uinput_and_restores_pty():
     except OSError as exc:
         ui.close()
         pytest.skip(f"uinput node {node} not readable: {exc}")
+    # Narrow keyboard detection to the virtual keyboard, so the capture does not
+    # also read the machine's real keyboards.
+    monkeypatch.setattr(binding_capture_module, "auto_detect_paths", lambda: [node])
 
     master_fd, slave_fd = pty.openpty()
     stdin = os.fdopen(os.dup(slave_fd), "r", encoding="utf-8")
@@ -62,7 +66,7 @@ def test_live_binding_capture_uses_real_uinput_and_restores_pty():
 
     def run_capture() -> None:
         try:
-            result.append(current_platform().capture_binding(stdin, node, timeout=3.0))
+            result.append(current_platform().capture_binding(stdin, timeout=3.0))
         except BaseException as exc:
             errors.append(exc)
 
