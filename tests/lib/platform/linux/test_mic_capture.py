@@ -273,6 +273,27 @@ def test_a_capture_logs_one_warning_with_the_count_of_replaced_samples(
     assert messages == ["capture: non_finite_samples_replaced source=mic count=3"] * warnings
 
 
+def test_a_child_that_exits_after_a_nan_sample_still_logs_one_warning(
+    tmp_path, monkeypatch, caplog
+):
+    _install(tmp_path, monkeypatch, early_exit=True)
+    monkeypatch.setenv("PW_NON_FINITE", "1")
+    capture = LinuxMicCapture()
+    items: list[np.ndarray | MicCaptureError] = []
+
+    with caplog.at_level(logging.WARNING, logger="stenographer.lib.platform.linux.pw_record"):
+        capture.start(None, items.append)
+        try:
+            capture._thread.join(timeout=5)
+            assert not capture._thread.is_alive()
+        finally:
+            capture.stop()
+
+    assert isinstance(items[-1], MicCaptureError)
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages == ["capture: non_finite_samples_replaced source=mic count=3"]
+
+
 def test_the_dictation_recorder_gets_finite_samples_from_the_real_capture(tmp_path, monkeypatch):
     _install(tmp_path, monkeypatch)
     monkeypatch.setenv("PW_NON_FINITE", "1")
@@ -285,8 +306,11 @@ def test_the_dictation_recorder_gets_finite_samples_from_the_real_capture(tmp_pa
     )
 
     recorder.start()
-    assert frames.wait(timeout=2)
-    audio = recorder.stop()
+    try:
+        assert frames.wait(timeout=2)
+        audio = recorder.stop()
+    finally:
+        recorder.close()
 
     assert audio[:6].tolist() == [0.25, -0.5, 0.0, 0.125, 0.0, 0.0]
     assert np.isfinite(audio).all()
