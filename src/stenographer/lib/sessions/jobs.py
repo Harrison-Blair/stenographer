@@ -24,7 +24,11 @@ from stenographer.lib.platform.errors import SpeakerDiarizerError
 from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.errors import SessionNotFoundError
 from stenographer.lib.sessions.models import SessionDetail
-from stenographer.lib.sessions.reader import session_directory, session_metadata
+from stenographer.lib.sessions.reader import (
+    UNKNOWN_FRAMES,
+    session_directory,
+    session_metadata,
+)
 from stenographer.lib.transcribe.worker import Worker
 
 if TYPE_CHECKING:
@@ -274,6 +278,8 @@ class SessionJobs:
         paths = [directory / "mic.flac", directory / "system.flac"]
         with ExitStack() as stack:
             streams = [stack.enter_context(sf.SoundFile(path)) for path in paths if path.is_file()]
+            # A stream of unknown length is a header with no audio to read.
+            streams = [stream for stream in streams if stream.frames != UNKNOWN_FRAMES]
             if not streams:
                 raise FileNotFoundError(f"session has no audio: {session_id}")
             sample_rate = streams[0].samplerate

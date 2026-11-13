@@ -19,6 +19,7 @@ from stenographer.lib.sessions import SessionStore
 from stenographer.lib.sessions.jobs import SessionJobs
 from stenographer.lib.transcribe.results import TranscriptionResult
 from tests.lib.platform.support import NullProcessCounters
+from tests.lib.sessions.helpers import write_unknown_length_flac
 
 RATE = 16000
 ANN, BOB = 0.1, 0.4
@@ -372,3 +373,14 @@ def test_rediarize_stops_the_worker_it_started(rig):
 
     assert [worker.closed for worker in made] == [True]
     assert made[0].calls == 2
+
+
+def test_play_audio_skips_a_track_of_unknown_length(rig):
+    session_id = recorded(rig.root, source="mic", speaker=("you", "You"))
+    write_unknown_length_flac(rig.store.root / session_id / "system.flac")
+
+    path = rig.jobs.write_play_audio(session_id)
+    try:
+        assert sf.info(path).frames == audio().size
+    finally:
+        path.unlink()
