@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from rich.console import RenderableType
 from textual import events
 from textual.app import ComposeResult
@@ -20,11 +22,19 @@ class TranscriptScroll(VerticalScroll):
     def compose(self) -> ComposeResult:
         yield Static("", id="transcript-scroll-content", markup=False)
 
-    def update_content(self, content: RenderableType | str) -> None:
-        """Update the transcript and follow only when the view was at the bottom."""
-        was_at_bottom = self._following or self.scroll_y >= self.max_scroll_y
+    def update_content(
+        self, content: RenderableType | str, *, place: Literal["keep", "start", "end"] = "keep"
+    ) -> None:
+        """Update the transcript and follow only when the view was at the bottom.
+
+        ``place`` "start" shows the first line; "end" shows the last line and follows new ones.
+        """
+        if place == "start":
+            was_at_bottom, old_scroll_y = False, 0.0
+        else:
+            was_at_bottom = place == "end" or self._following or self.scroll_y >= self.max_scroll_y
+            old_scroll_y = self.scroll_y
         self._following = was_at_bottom
-        old_scroll_y = self.scroll_y
         self.query_one("#transcript-scroll-content", Static).update(content)
         self.call_after_refresh(self._restore_scroll, was_at_bottom, old_scroll_y)
 
