@@ -153,10 +153,13 @@ def test_detected_device_that_cannot_be_opened_backs_off_instead_of_spinning(mon
     listener.start()
     try:
         time.sleep(0.3)
+        # Still retrying, not given up: a listener that returns at once would
+        # also scan fewer than 20 times.
+        assert listener.is_running, "listener exited instead of retrying"
+        assert len(calls) >= 1, "listener never scanned for keyboards"
+        assert len(calls) < 20, f"listener spun {len(calls)} times in 0.3s (expected backoff)"
     finally:
         listener.stop()
-
-    assert len(calls) < 20, f"listener spun {len(calls)} times in 0.3s (expected backoff)"
 
 
 def test_the_device_enumeration_seam_lists_paths_without_opening_any():
@@ -431,6 +434,11 @@ def test_reacquire_backs_off_between_scans_instead_of_spinning(monkeypatch):
     worker.start()
     try:
         time.sleep(0.2)
+        # Still waiting, not given up: a reacquire that returns at once would
+        # also scan fewer than 5 times.
+        assert worker.is_alive(), "reacquire returned before the stop"
+        assert outcome == []
+        assert len(scans) >= 1, "reacquire never scanned for keyboards"
         assert len(scans) < 5, f"reacquire scanned {len(scans)} times in 0.2s"
         listener._stop_event.set()
         worker.join(timeout=10)
