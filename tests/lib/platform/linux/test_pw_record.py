@@ -82,3 +82,38 @@ def test_discard_drops_buffered_samples_but_keeps_the_format_and_sample_alignmen
     audio = np.concatenate([*blocks, tail])
     assert audio[0] == np.float32(0.25)
     np.testing.assert_array_equal(audio[1:], _SAMPLES)
+
+
+def _with_non_finite() -> np.ndarray:
+    """``_SAMPLES`` with NaN, +infinity, and -infinity between finite samples, in two blocks."""
+    samples = _SAMPLES.copy()
+    samples[[3, 300, BLOCK_FRAMES + 7]] = [np.nan, np.inf, -np.inf]
+    return samples
+
+
+@pytest.mark.parametrize(
+    "encode",
+    [
+        lambda samples: samples.astype("<f4").tobytes(),
+        lambda samples: _au_header() + samples.astype(">f4").tobytes(),
+    ],
+    ids=["raw", "au"],
+)
+def test_non_finite_samples_become_zero_and_are_counted(encode):
+    decoder = PwRecordDecoder()
+    blocks = decoder.feed(encode(_with_non_finite()))
+    audio = np.concatenate([*blocks, decoder.finish()])
+
+    expected = _SAMPLES.copy()
+    expected[[3, 300, BLOCK_FRAMES + 7]] = 0.0
+    np.testing.assert_array_equal(audio, expected)
+    assert decoder.replaced == 3
+
+
+def test_a_stream_of_finite_samples_replaces_nothing():
+    decoder = PwRecordDecoder()
+    blocks = decoder.feed(_SAMPLES.astype("<f4").tobytes())
+    audio = np.concatenate([*blocks, decoder.finish()])
+
+    np.testing.assert_array_equal(audio, _SAMPLES)
+    assert decoder.replaced == 0

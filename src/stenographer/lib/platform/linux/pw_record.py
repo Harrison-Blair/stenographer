@@ -9,6 +9,7 @@ PipeWire (1.0.5 on Ubuntu 24.04) writes raw little-endian samples. PipeWire
 
 from __future__ import annotations
 
+import logging
 import os
 import struct
 import subprocess
@@ -17,7 +18,10 @@ from collections.abc import Callable
 
 import numpy as np
 
+from stenographer.lib.logging.pipeline import fmt_event
 from stenographer.lib.platform.errors import PwRecordFormatError
+
+log = logging.getLogger(__name__)
 
 RATE = 16000
 BLOCK_FRAMES = 512
@@ -28,12 +32,17 @@ _AU_FLOAT32 = 6
 
 
 class PwRecordDecoder:
-    """Turn ``pw-record`` stdout bytes into float32 blocks of ``BLOCK_FRAMES`` samples. PURE."""
+    """Turn ``pw-record`` stdout bytes into float32 blocks of ``BLOCK_FRAMES`` samples. PURE.
+
+    A non-finite sample (NaN or infinity) becomes 0.0: one such sample makes
+    the FLAC write of a recording fail. ``replaced`` counts them.
+    """
 
     def __init__(self) -> None:
         self._pending = bytearray()
         self._dtype: str | None = None
         self._skip = 0
+        self.replaced = 0
 
     def feed(self, chunk: bytes) -> list[np.ndarray]:
         """Add *chunk* and return every complete block."""
@@ -88,7 +97,13 @@ class PwRecordDecoder:
 
     def _samples(self, raw: bytes | bytearray) -> np.ndarray:
         assert self._dtype is not None
-        return np.frombuffer(bytes(raw), dtype=self._dtype).astype(np.float32)
+        samples = np.frombuffer(bytes(raw), dtype=self._dtype).astype(np.float32)
+        bad = ~np.isfinite(samples)
+        count = int(np.count_nonzero(bad))
+        if count:
+            samples[bad] = 0.0
+            self.replaced += count
+        return samples
 
 
 def discard_pending(process: subprocess.Popen, decoder: PwRecordDecoder) -> None:
@@ -116,8 +131,12 @@ def read_stdout(
     on_block: Callable[[object], None],
     stopping: threading.Event,
     error_type: type[Exception],
+    source: str,
 ) -> None:
     """Reader thread: send each block to *on_block*, then an *error_type* if the stream failed.
+
+    At the end it logs one warning if the decoder replaced non-finite samples
+    of *source* (``mic`` or ``system``).
 
     A stream that ends while *stopping* is not set is a failure. The child has
     ended before the failure is delivered: a capture reported as failed no
@@ -140,6 +159,12 @@ def read_stdout(
     except OSError:
         read_error = error_type("could not read pw-record audio")
 
+    if decoder.replaced:
+        log.warning(
+            fmt_event(
+                "capture", "non_finite_samples_replaced", source=source, count=decoder.replaced
+            )
+        )
     if read_error is not None:
         terminate_process(process)
         _deliver(on_block, read_error)

@@ -49,7 +49,7 @@ class LinuxMicCapture:
         self._process = process
         self._thread = threading.Thread(
             target=read_stdout,
-            args=(process, PwRecordDecoder(), on_block, self._stopping, MicCaptureError),
+            args=(process, PwRecordDecoder(), on_block, self._stopping, MicCaptureError, "mic"),
             name="stenographer-mic-capture",
             daemon=True,
         )
