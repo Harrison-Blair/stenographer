@@ -215,6 +215,8 @@ class LibraryScreen(HubScreen):
         self._rows_key: object = None
         self._row_in_view: int | None = None
         self._transcript_key: object = None
+        # The entry whose lines the transcript shows; None while it shows no entry's lines.
+        self._transcript_entry: str | None = None
         self._actions_key: object = None
         self._play_timer = None
         self._rows = TranscriptRows()
@@ -355,6 +357,7 @@ class LibraryScreen(HubScreen):
         self.opened = opened
         self.set_class(opened, "-open")
         self._row_in_view = None
+        self._transcript_entry = None
         self._rows_key = None
         self.app.refresh_view()
         # The view that shows gets its widths in the next layout.
@@ -727,11 +730,20 @@ class LibraryScreen(HubScreen):
         elif detail is not None:
             lines = detail.lines
             message = "This session has no transcript lines."
+        elif self._detail_error is None and self._transcript_entry == entry.entry_id:
+            # A new revision or a finished file job reloads the shown session: keep its lines.
+            return
         else:
             lines = ()
             message = self._detail_error or "Loading…"
+        shown = entry.entry_id if entry.summary is None or detail is not None else None
+        place = "keep"
+        if shown is not None and shown != self._transcript_entry:
+            # A saved session opens at its first line; a running file job follows its newest.
+            place = "end" if entry.summary is None else "start"
+        self._transcript_entry = shown
         key = (lines, message)
-        if key == self._transcript_key:
+        if key == self._transcript_key and place == "keep":
             return
         self._transcript_key = key
         ids = tuple(dict.fromkeys(line.speaker_id for line in lines))
@@ -739,7 +751,7 @@ class LibraryScreen(HubScreen):
         failed = entry.summary is None and entry.job.state in _FAILED_JOB_STATES
         if message and (not rows or failed):
             rows.insert(0, Text(message, style=_DIM))
-        self._transcript().update_content(Group(*rows))
+        self._transcript().update_content(Group(*rows), place=place)
 
     # Play position
 
@@ -870,6 +882,9 @@ class LibraryScreen(HubScreen):
             ]
         self.entries = tuple(entries)
         if self._follow_select is not None and self.entry(self._follow_select) is not None:
+            if self._transcript_entry == self._selected_id:
+                # The finished file job's session keeps the job's scroll position.
+                self._transcript_entry = self._follow_select
             self._selected_id, self._follow_select = self._follow_select, None
         if self.entry(self._selected_id or "") is None:
             self._selected_id = self.entries[0].entry_id if self.entries else None

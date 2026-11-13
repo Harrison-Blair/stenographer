@@ -10,7 +10,9 @@ import tempfile
 import threading
 from datetime import timedelta
 
+import numpy as np
 import pytest
+import soundfile as sf
 from textual.widgets import Input, Static
 
 from stenographer.cli.hub.dialogs import QuitConfirm
@@ -27,7 +29,7 @@ from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.refine.errors import RefineTransportError
 from stenographer.lib.sessions import SessionStore
-from tests.cli.hub.support import _screen_text, make_app
+from tests.cli.hub.support import _layout_problems, _screen_text, make_app
 from tests.cli.hub.test_library import (
     REC_LIVE,
     FakeJob,
@@ -1078,3 +1080,164 @@ async def test_a_file_transcribe_revision_shows_re_transcribe_in_both_views(tmp_
         head = _meta(app)
         assert head.split(" · ")[0].strip() == "re-transcribe", head
         assert len(_line_of(app, "[esc] ← Library")) == width
+
+
+# Transcript position
+
+SIZES = pytest.mark.parametrize("size", [(120, 35), (60, 16)])
+
+
+def _long_lines(prefix: str, count: int = 60) -> tuple[TranscriptLine, ...]:
+    return tuple(
+        TranscriptLine(i, i + 1, "", "system", "speaker-1", "Speaker 1", f"{prefix}{i:03d}")
+        for i in range(count)
+    )
+
+
+def _write_long_rec(tmp_path, started_at, prefix: str) -> str:
+    writer = SessionWriter.open(tmp_path, started_at)
+    for line in _long_lines(prefix):
+        writer.append_line(line)
+    writer.close()
+    return writer.path.name
+
+
+def _shows(app, text: str) -> bool:
+    return text in _screen_text(app)
+
+
+async def _open_entry(pilot, app, entry_id: str) -> None:
+    screen = app.library_screen
+    screen.select_entry(entry_id)
+    # The table loads the detail of the selected entry before enter, as it does for a user.
+    if screen.selected_entry.summary is not None:
+        await _until(pilot, lambda: screen.detail is not None and screen._detail_id == entry_id)
+    await pilot.press("enter")
+    await _settle(pilot, app)
+
+
+@SIZES
+async def test_a_saved_session_opens_at_its_first_line_and_so_does_the_next_one(tmp_path, size):
+    first = _write_long_rec(tmp_path, REC_LIVE, "alpha")
+    second = _write_long_rec(tmp_path, REC_LIVE - timedelta(days=1), "bravo")
+    app = make_app(tmp_path, FakeServices(tmp_path / "sessions"))
+    async with app.run_test(size=size) as pilot:
+        await _open(pilot, app, 2)
+        await _open_entry(pilot, app, first)
+        transcript = app.screen.query_one("#library-transcript")
+        assert transcript.max_scroll_y > 3, "the transcript must be longer than its view"
+        assert _shows(app, "alpha000")
+        assert not _shows(app, "alpha059")
+        assert _layout_problems(app) == []
+
+        await pilot.press("down", "down", "down")
+        assert transcript.scroll_y == 3
+        await pilot.press("escape")
+        await _settle(pilot, app)
+        await _open_entry(pilot, app, second)
+        assert _shows(app, "bravo000")
+        assert not _shows(app, "bravo059")
+        assert _layout_problems(app) == []
+
+        # Home, end and the line keys act as before.
+        await pilot.press("end")
+        assert transcript.scroll_y == transcript.max_scroll_y
+        assert _shows(app, "bravo059")
+        await pilot.press("home", "down")
+        assert transcript.scroll_y == 1
+
+
+@SIZES
+async def test_a_redraw_of_the_open_session_keeps_the_scroll_position(tmp_path, size):
+    session = _write_long_rec(tmp_path, REC_LIVE, "alpha")
+    root = tmp_path / "sessions"
+    services = FakeServices(root)
+    services.release_job.set()
+    app = make_app(tmp_path, services)
+    screen = app.library_screen
+    async with app.run_test(size=size) as pilot:
+        await _open(pilot, app, 1)
+        await _open_entry(pilot, app, session)
+        transcript = app.screen.query_one("#library-transcript")
+        await pilot.press("down", "down", "down")
+        assert transcript.scroll_y == 3
+
+        SessionStore(root).set_title(session, TITLE)
+        screen.load_sessions()
+        await _until(pilot, lambda: screen.selected_entry.summary.title == TITLE)
+        await _settle(pilot, app)
+        assert transcript.scroll_y == 3
+
+        revision = screen.detail.revision
+        await pilot.press("d")
+        await _until(
+            pilot, lambda: screen.detail is not None and screen.detail.revision != revision
+        )
+        await _settle(pilot, app)
+        assert ("diarization", session) in services.actions
+        assert transcript.scroll_y == 3
+        assert _shows(app, "alpha003")
+        assert _layout_problems(app) == []
+
+
+@SIZES
+async def test_a_running_file_job_follows_its_newest_line(tmp_path, size):
+    session = _write_long_rec(tmp_path, REC_LIVE, "alpha")
+    services = FakeServices(tmp_path / "sessions")
+    job = FakeJob("file-1", tmp_path / "sources" / "lecture.mp3", percent=40)
+    job.progress = FileJobProgress("transcribe", 40, _long_lines("juliet", 40))
+    services.jobs.append(job)
+    app = make_app(tmp_path, services)
+    screen = app.library_screen
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("2")
+        await _until(pilot, lambda: len(screen.entries) == 2)
+        # A saved session viewed at its first line does not stop the job from following.
+        await _open_entry(pilot, app, session)
+        await pilot.press("home", "escape")
+        await _settle(pilot, app)
+        await _open_entry(pilot, app, "job:file-1")
+        assert _shows(app, "juliet039")
+        assert not _shows(app, "juliet000")
+
+        job.progress = FileJobProgress("transcribe", 80, _long_lines("juliet", 80))
+        screen.poll_jobs()
+        await _settle(pilot, app)
+        assert _shows(app, "juliet079")
+        assert _layout_problems(app) == []
+
+
+@SIZES
+async def test_a_file_job_that_finishes_while_open_keeps_the_scroll_position(tmp_path, size):
+    root = tmp_path / "sessions"
+    services = FakeServices(root)
+    source = tmp_path / "sources" / "lecture.wav"
+    job = FakeJob("file-1", source, percent=90)
+    lines = _long_lines("juliet")
+    job.progress = FileJobProgress("transcribe", 90, lines)
+    services.jobs.append(job)
+    app = make_app(tmp_path, services)
+    screen = app.library_screen
+    async with app.run_test(size=size) as pilot:
+        await pilot.press("2")
+        await _until(pilot, lambda: len(screen.entries) == 1)
+        await _open_entry(pilot, app, "job:file-1")
+        transcript = app.screen.query_one("#library-transcript")
+        await pilot.press("up", "up", "up")
+        position = transcript.scroll_y
+        assert 0 < position == transcript.max_scroll_y - 3
+
+        source.parent.mkdir(parents=True)
+        sf.write(source, np.zeros(16_000, dtype=np.float32), 16_000)
+        job.session_id = SessionStore(root).create_file_session(
+            source, started_at=REC_LIVE, duration_seconds=60.0, lines=lines
+        )
+        job.state = "completed"
+        await _until(
+            pilot,
+            lambda: screen.selected_id == job.session_id and screen.detail is not None,
+        )
+        await _settle(pilot, app)
+        assert screen.opened
+        assert transcript.scroll_y == position
+        assert _layout_problems(app) == []
