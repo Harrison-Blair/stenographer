@@ -32,6 +32,11 @@ class TranscriptScroll(VerticalScroll):
         if self._following:
             self.scroll_end(animate=False, immediate=True, x_axis=False)
 
+    def on_resize(self) -> None:
+        # A row above the transcript can change its height: the view keeps the bottom.
+        if self._following:
+            self.call_after_refresh(self.scroll_bottom)
+
     def scroll_line(self, offset: int) -> None:
         self.scroll_relative(y=offset, animate=False, immediate=True)
         self._update_following()

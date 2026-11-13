@@ -1663,3 +1663,19 @@ async def test_mic_head_device_click_opens_the_device_dialog_in_the_full_form(tm
         assert head.endswith("[d] device"), head
         await _click_mic_head_end(pilot, app)
         await _until(pilot, lambda: isinstance(app.screen, ChoiceDialog))
+
+
+async def test_record_speaker_row_takes_the_height_of_its_text_after_a_resize(tmp_path):
+    services, created = _services(tmp_path)
+    app = _app(tmp_path, services)
+    async with app.run_test(size=(150, 45)) as pilot:
+        session = await _record_with_rooms(pilot, services, created, app)
+        bar = app.screen.query_one("#speaker-bar", SpeakerBar)
+        for size, rows in (((60, 16), 1), ((150, 45), 2), ((60, 16), 1)):
+            await pilot.resize_terminal(*size)
+            app.refresh_view()
+            await pilot.pause()
+            await pilot.pause()
+            assert len(bar.bar_text(bar.size.width).plain.splitlines()) == rows, size
+            assert bar.region.height == rows, size
+        session.release.set()
