@@ -53,7 +53,9 @@ class HubServices:
         self._player: subprocess.Popen | None = None
         self._player_session_id: str | None = None
         self._player_temp_path: Path | None = None
-        self._player_started_at = 0.0
+        # ``(session_id, start time)`` of the player that runs. It is replaced as a whole, so
+        # ``session_playback`` reads it without the lock that a play preparation holds.
+        self._playing: tuple[str, float] | None = None
         self._clock = clock
         self._player_lock = threading.Lock()
         self._stopped_players: set[subprocess.Popen] = set()
@@ -266,7 +268,7 @@ class HubServices:
             self._player = process
             self._player_session_id = session_id
             self._player_temp_path = mixed_path
-            self._player_started_at = self._clock()
+            self._playing = (session_id, self._clock())
             log.info(
                 fmt_event("hub", "session_playback_started", session_id=session_id, pid=process.pid)
             )
@@ -279,10 +281,10 @@ class HubServices:
 
     def session_playback(self) -> tuple[str, float] | None:
         """Return the session that plays and the seconds since its player started, or ``None``."""
-        with self._player_lock:
-            if self._player is None or self._player_session_id is None:
-                return None
-            return self._player_session_id, self._clock() - self._player_started_at
+        playing = self._playing
+        if playing is None:
+            return None
+        return playing[0], self._clock() - playing[1]
 
     def stop_session_playback(self) -> None:
         with self._player_lock:
@@ -305,6 +307,7 @@ class HubServices:
         )
         self._player = None
         self._player_session_id = None
+        self._playing = None
         return True
 
     def _watch_player(
@@ -330,6 +333,7 @@ class HubServices:
             if self._player is process:
                 self._player = None
                 self._player_session_id = None
+                self._playing = None
             if self._player_temp_path == mixed_path:
                 self._player_temp_path = None
             mixed_path.unlink(missing_ok=True)

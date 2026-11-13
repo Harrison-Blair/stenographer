@@ -388,7 +388,7 @@ class LibraryScreen(HubScreen):
         count = f"{self._all_count:>{_COUNT_SLOT}}"
         size = f"{format_size(total):>{_SIZE_SLOT}}"
         # An open search takes the free cells of the row; the medium tier then drops the words.
-        searching = self.query_one("#library-search", Input).display
+        searching = self._search_shown
         short = self.tier == "narrow" or (searching and self.tier == "medium")
         text = f"{count} · {size}" if short else f"{count} entries · {size} audio"
         self.query_one("#library-head-gap").display = not searching
@@ -447,6 +447,9 @@ class LibraryScreen(HubScreen):
                 self.query_one("#library-columns", Static),
                 LibraryTable.heading(self.tier, table.size.width),
             )
+            # A new height can leave the selected entry below or above the view.
+            if table.selected_index is not None:
+                self._show_row(table.selected_index)
 
     def _when(self, entry: LibraryEntry) -> datetime:
         if entry.summary is not None:
@@ -491,7 +494,10 @@ class LibraryScreen(HubScreen):
         )
 
     def _state_word(self, entry: LibraryEntry) -> Text:
-        """Return the state of the wide table: a word; a fault also has its glyph."""
+        """Return the state word of the wide table and the open session; a fault has its glyph.
+
+        A job's ``queued`` or percent shows in the duration slot, not here.
+        """
         summary = entry.summary
         job = entry.job
         if summary is None:
@@ -549,7 +555,7 @@ class LibraryScreen(HubScreen):
             text = self._state_glyph(entry)
             text.pad_left(1 - text.cell_len)
             return Text.assemble(text, " ", f"{when:%d %b %H:%M}", sep, dur)
-        state = self._session_state(entry)
+        state = self._state_word(entry)
         state.pad_left(_STATE_SLOT - state.cell_len)
         date = f"{when:%d %b %Y %H:%M}" if self.tier == "wide" else f"{when:%d %b %H:%M}"
         size = format_size(summary.audio_size_bytes) if summary is not None else "—"
@@ -564,28 +570,6 @@ class LibraryScreen(HubScreen):
             sep,
             f"{size:>{_SIZE_SLOT}}",
         )
-
-    def _session_state(self, entry: LibraryEntry) -> Text:
-        job = entry.job
-        summary = entry.summary
-        if job is not None and (summary is None or entry.job_active):
-            if job.state == "queued":
-                return Text("queued", style=_WARN)
-            if job.state == "running":
-                # The percent shows in the duration slot.
-                return Text("transcribing", style=_WARN)
-            if job.state in _FAILED_JOB_STATES:
-                return Text(f"{_FAILED} failed", style=_DANGER)
-            return Text(job.state, style=_DIM)
-        work = self._session_work.get(summary.session_id)
-        if work is not None:
-            return Text(work, style=_WARN)
-        if summary.interrupted:
-            return Text("! interrupted", style=_DANGER)
-        if summary.label_state == "live":
-            shown = summary.kind != "file" or summary.speaker_pass_failed
-            return Text("live labels" if shown else "", style=_DIM)
-        return Text(summary.label_state, style=StatusToken.TONES["ok"])
 
     def _speaker_items(self, detail: SessionDetail) -> tuple[Text, ...]:
         ids = self._speaker_ids(detail)
@@ -1001,7 +985,12 @@ class LibraryScreen(HubScreen):
         return True
 
     def show_session(self, session_id: str) -> None:
-        """Select and open a session; reload the list first when it is not in it."""
+        """Select and open a session; reload the list first when it is not in it.
+
+        A kept search could hide the session, so it is cleared first.
+        """
+        if self.is_mounted and (self.search_query or self._search_shown):
+            self.action_clear_search()
         if self.select_entry(session_id):
             self._set_opened(True)
         else:
@@ -1039,6 +1028,10 @@ class LibraryScreen(HubScreen):
         search.display = True
         self.query_one("#library-search-button", HubButton).set_label("")
         search.focus()
+
+    @property
+    def _search_shown(self) -> bool:
+        return self.query_one("#library-search", Input).display
 
     def action_clear_search(self) -> None:
         search = self.query_one("#library-search", Input)
@@ -1292,7 +1285,16 @@ class LibraryScreen(HubScreen):
 
     def _delete(self, session_id: str, confirmed: bool | None) -> None:
         if confirmed and self.store is not None:
-            self._start_job("Delete", session_id, self.store.delete)
+            self._start_job("Delete", session_id, self._delete_session)
+
+    def _delete_session(self, session_id: str) -> None:
+        """Stop the player of this session, then delete it; runs off the event loop."""
+        services = self.app.services
+        playback = getattr(services, "session_playback", None)
+        playing = playback() if playback is not None else None
+        if playing is not None and playing[0] == session_id:
+            services.stop_session_playback()
+        self.store.delete(session_id)
 
     # Transcript scroll
 

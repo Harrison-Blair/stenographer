@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import tempfile
+import threading
 from datetime import timedelta
 
 import pytest
@@ -20,6 +21,8 @@ from stenographer.cli.hub.title_dialog import TitleDialog
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.lib.config.models import Config
 from stenographer.lib.files.models import FileJobProgress
+from stenographer.lib.live.session_writer import SessionWriter
+from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.sessions import SessionStore
 from tests.cli.hub.support import _screen_text, make_app
 from tests.cli.hub.test_library import (
@@ -115,15 +118,29 @@ async def test_a_click_on_back_returns_and_show_library_opens_the_session(tmp_pa
 
 
 async def test_up_and_down_scroll_the_open_transcript_and_select_in_the_table(tmp_path):
-    root, sessions = _library(tmp_path)
+    root = tmp_path / "sessions"
+    writer = SessionWriter.open(tmp_path, REC_LIVE)
+    for index in range(60):
+        writer.append_line(
+            TranscriptLine(index, index + 1, "", "mic", "you", "You", f"line {index}")
+        )
+    writer.close()
+    older = _write_rec(root, REC_LIVE - timedelta(days=1)).name
     app = make_app(tmp_path, FakeServices(root))
     async with app.run_test(size=(120, 35)) as pilot:
-        await _open(pilot, app, 4)
-        await pilot.press("enter", "down")
+        await _open(pilot, app, 2)
+        await pilot.press("enter", "home")
         await _settle(pilot, app)
-        assert app.library_screen.selected_id == sessions["relabeled"]
+        transcript = app.screen.query_one("#library-transcript")
+        assert transcript.max_scroll_y > 2, "the transcript must be longer than its view"
+        assert transcript.scroll_y == 0
+        await pilot.press("down")
+        assert transcript.scroll_y == 1
+        await pilot.press("down", "up", "down")
+        assert transcript.scroll_y == 2
+        assert app.library_screen.selected_id == writer.path.name
         await pilot.press("escape", "down")
-        assert app.library_screen.selected_id == sessions["live"]
+        assert app.library_screen.selected_id == older
 
 
 ACTION_KEYS = {
@@ -206,7 +223,7 @@ async def test_a_running_revision_job_turns_delete_into_cancel_job(tmp_path):
         delete = _button(app, "library-delete")
         assert delete.label.plain == "[del] Cancel job…"
         assert not delete.disabled
-        assert "transcribing" in _line_of(app, "[esc] ← Library")
+        assert "re-transcribe ·" in _line_of(app, "[esc] ← Library")
         await pilot.press("delete")
         await _until(pilot, lambda: isinstance(app.screen, QuitConfirm))
         await pilot.press("y")
@@ -429,11 +446,13 @@ async def test_the_job_percent_and_the_head_values_keep_their_neighbours(tmp_pat
             screen.poll_jobs()
             await _settle(pilot, app)
             row = _line_of(app, "lecture.mp3")
+            shown = "queued" if state == "queued" else f"{percent}%"
+            assert f" {shown}  file " in row, row
             positions.append((row.index("file"), row.index("lecture.mp3"), row.index("transcribe")))
         assert len(set(positions)) == 1, positions
 
         head = []
-        for count, total in ((0, 0), (999, int(999.9 * 1024**3))):
+        for count, total, size in ((0, 0, "0 M"), (999, int(999.9 * 1024**3), "999.9 G")):
             screen._all_count = count
             screen.summaries = tuple(
                 type(s)(**{**s.__dict__, "audio_size_bytes": total // len(screen.summaries)})
@@ -442,6 +461,7 @@ async def test_the_job_percent_and_the_head_values_keep_their_neighbours(tmp_pat
             await _settle(pilot, app)
             line = _line_of(app, "[n] + Transcribe a file…")
             assert f"{count} entries" in line
+            assert f" {size} audio" in line, line
             region = app.screen.query_one("#library-count").region
             head.append((line.index("[n]"), region.x, region.width, line.index("audio")))
         assert head[0] == head[1], head
@@ -582,3 +602,126 @@ async def test_the_open_transcript_shows_speakers_bold_in_their_colour_with_no_f
         speaker = next(segment for segment in segments if segment.text.strip() == "Speaker 1")
         assert speaker.style.bold
         assert speaker.style.color.triplet == (255, 175, 95)
+
+
+def test_session_playback_answers_while_the_play_audio_is_prepared(tmp_path, monkeypatch):
+    _app, services, _clock, session = _player_app(tmp_path, monkeypatch, lambda c: FakePlayer())
+    preparing = threading.Event()
+    release = threading.Event()
+    play_file = tmp_path / "play.wav"
+    play_file.write_bytes(b"")
+
+    class _HeldJobs:
+        def write_play_audio(self, session_id):
+            preparing.set()
+            assert release.wait(5), "the test did not release the preparation"
+            return play_file
+
+    services._session_jobs = _HeldJobs()
+    answered = threading.Event()
+    toggle = threading.Thread(target=services.toggle_session_playback, args=(session,))
+    toggle.start()
+    try:
+        assert preparing.wait(5)
+
+        def ask():
+            services.session_playback()
+            answered.set()
+
+        threading.Thread(target=ask, daemon=True).start()
+        # The answer comes while the preparation is still held.
+        assert answered.wait(5), "session_playback() waited for the play audio"
+        assert not release.is_set()
+        assert services.session_playback() is None
+    finally:
+        release.set()
+        toggle.join(5)
+    assert services.session_playback()[0] == session
+    # A second toggle at the same time as none: the same session stops.
+    services.toggle_session_playback(session)
+    assert services.session_playback() is None
+
+
+async def test_a_delete_stops_the_player_of_that_session_and_leaving_does_not(
+    tmp_path, monkeypatch
+):
+    players: list[FakePlayer] = []
+
+    def start_player(command):
+        players.append(FakePlayer())
+        return players[-1]
+
+    app, services, _clock, session = _player_app(tmp_path, monkeypatch, start_player)
+    try:
+        async with app.run_test(size=(120, 35)) as pilot:
+            await _open(pilot, app, 1)
+            await pilot.press("p")
+            await _until(pilot, lambda: services.session_playback() is not None, "no player")
+            await pilot.press("1")
+            await pilot.pause(0.1)
+            assert not players[0].terminated, "leaving the Library stopped the player"
+            await pilot.press("2", "delete")
+            await _until(pilot, lambda: isinstance(app.screen, QuitConfirm))
+            await pilot.press("y")
+            await _until(pilot, lambda: not (tmp_path / "sessions" / session).exists())
+            assert players[0].terminated, "the deleted session still plays"
+            assert services.session_playback() is None
+    finally:
+        services.stop_session_playback()
+
+
+async def test_show_library_clears_a_kept_search_and_opens_the_session(tmp_path):
+    root, sessions = _library(tmp_path)
+    SessionStore(root).set_title(sessions["file"], "Zebra crossing survey")
+    app = make_app(tmp_path, FakeServices(root))
+    screen = app.library_screen
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _open(pilot, app, 4)
+        await pilot.press("slash", *"zebra", "enter")
+        await _until(pilot, lambda: [e.entry_id for e in screen.entries] == [sessions["file"]])
+        await pilot.press("enter", "1")
+        await pilot.pause()
+
+        app.show_library(sessions["live"])
+        await _until(pilot, lambda: screen.opened and screen.selected_id == sessions["live"])
+        assert screen.search_query == ""
+        assert not app.screen.query_one("#library-search", Input).display
+        assert _button(app, "library-search-button").label.plain == "[/] search"
+        assert not any("was not found" in notice for notice in _notices(app))
+
+        # A session saved after the list was read.
+        newer = _write_rec(root, REC_LIVE + timedelta(days=3)).name
+        await pilot.press("1")
+        app.show_library(newer)
+        await _until(pilot, lambda: screen.opened and screen.selected_id == newer)
+
+
+def _meta(app) -> str:
+    return app.screen.query_one("#library-session-meta", Static).render().plain
+
+
+async def test_the_open_session_shows_the_state_word_of_the_wide_table(tmp_path):
+    root, sessions = _library(tmp_path)
+    services = FakeServices(root)
+    services.jobs.append(FakeJob("file-1", tmp_path / "sources" / "standup.flac", state="queued"))
+    app = make_app(tmp_path, services)
+    screen = app.library_screen
+    async with app.run_test(size=(120, 35)) as pilot:
+        await pilot.press("2")
+        await _until(pilot, lambda: len(screen.entries) == 5)
+        await pilot.press("enter")
+        await _settle(pilot, app)
+        head = _meta(app)
+        assert head.count("queued") == 1, head
+        assert head.split(" · ")[0].strip() == "transcribe", head
+
+        await pilot.press("escape")
+        screen.select_entry(sessions["file"])
+        await pilot.press("enter")
+        await _until(
+            pilot, lambda: screen.detail is not None and screen._detail_id == sessions["file"]
+        )
+        await _settle(pilot, app)
+        head = _meta(app)
+        # A file session whose speaker pass ran has live labels: the state slot says so.
+        assert head.split(" · ")[0].strip() == "live", head

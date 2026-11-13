@@ -296,11 +296,21 @@ async def test_resize_histories_fit_the_table_and_the_open_session(tmp_path, his
     app = make_app(tmp_path, _sessions(tmp_path, 12))
     async with app.run_test(size=history[0]) as pilot:
         await _show_table(pilot, app, 12)
+        oldest = f"{app.library_screen.entries[-1].summary.started_at:%d %b %H:%M}"
         for size in history[1:]:
+            # The last entry is selected: after the resize its row must still show.
+            await pilot.press("end")
+            await _settle(pilot, app)
             await pilot.resize_terminal(*size)
             await _settle(pilot, app)
             assert _layout_problems(app) == [], ("table", size)
             _assert_table(app, 12)
+            assert any(
+                line.lstrip("│ ").startswith(f"▶ {oldest}")
+                for line in _screen_text(app).splitlines()
+            ), ("the selected row is out of view", size)
+            await pilot.press("home")
+            await _settle(pilot, app)
             heading = _screen_text(app).splitlines()[
                 app.screen.query_one("#library-columns").region.y
             ]

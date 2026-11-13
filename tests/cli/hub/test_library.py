@@ -409,7 +409,7 @@ def test_library_does_not_list_the_active_recording(tmp_path):
 # V2: detail and actions
 
 
-def test_a_file_session_with_a_failed_speaker_pass_shows_live_labels_in_its_detail(tmp_path):
+def test_a_file_session_with_a_failed_speaker_pass_shows_live_in_its_open_head(tmp_path):
     root = tmp_path / "sessions"
     source = tmp_path / "sources" / "meeting.wav"
     source.parent.mkdir(parents=True)
@@ -431,7 +431,7 @@ def test_a_file_session_with_a_failed_speaker_pass_shows_live_labels_in_its_deta
             await pilot.press("enter")
             app.refresh_view()
             await pilot.pause()
-            assert "live labels" in _meta(app)
+            assert _meta(app).split(" · ")[0].strip() == "live"
 
     asyncio.run(exercise())
 
@@ -475,8 +475,8 @@ def test_library_open_session_of_a_recording_and_of_a_file_session(tmp_path):
             await pilot.pause()
             text = _screen_text(app)
             assert "26 Oct 2026 13:30 ·     0:01 · file" in _meta(app)
-            # Live labels belong to a recording; a file session has no live pass.
-            assert "live" not in _meta(app)
+            # The same state word as the wide table.
+            assert _meta(app).split(" · ")[0].strip() == "live"
             assert "golf hotel india" in text
             rediarize = _button(app, "library-rediarize")
             assert rediarize.disabled
@@ -788,7 +788,7 @@ def test_library_job_rows_complete_fail_and_cancel(tmp_path):
             await pilot.press("enter")
             app.refresh_view()
             await pilot.pause()
-            assert "transcribing ·" in _meta(app) and "60%" in _meta(app)
+            assert "transcribe ·" in _meta(app) and "60%" in _meta(app)
             assert "juliet kilo lima" in _screen_text(app)
             await pilot.press("escape")
 

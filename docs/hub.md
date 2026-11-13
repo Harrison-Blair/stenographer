@@ -341,12 +341,20 @@ file job without a title shows the name of its file.
 The `state` cell of the wide tier shows a word: the label state (`live`,
 `relabeled`, or a revision method such as `rename` or `re-transcribe`),
 `! interrupted` when the recording stopped without a clean save, `× failed` for
-a failed file job, or the job that changes the entry (`transcribe`,
-`re-transcribe`, `re-diarize`). The medium and narrow tiers show only a glyph:
-`!` interrupted, `×` failed. A file job, or a job that writes a new revision of
-a listed session, shows `queued` or its percent in the `dur` cell. A failed job
-shows `× failed`; press `delete` to remove its row. When a job finishes, its row
-becomes the session row and stays selected.
+a failed file job, or the work that changes the entry. A file job shows
+`transcribe`; a file job that writes a new revision of a listed session shows
+`re-transcribe` on that session row. Work that the Library starts on a session
+shows its name while it runs: `re-diarize`, `re-transcribe`, `rename`, `title`,
+or `delete`. The open session shows the same word. The medium and narrow tiers
+show only a glyph: `!` interrupted, `×` failed.
+
+Only file jobs, which [Transcribe a file](#transcribe-a-file) queues, show
+`queued` or their percent in the `dur` cell, and only they can be cancelled.
+This includes a file job on the `mic.flac`, `system.flac`, or `source.<ext>` of
+a listed session. `d`, `t`, a rename, a title, and a delete show no percent and
+cannot be cancelled. A failed file job shows `× failed`; press `delete` to
+remove its row. When a file job finishes, its row becomes the session row and
+stays selected.
 
 The table updates when a job ends and when a recording is saved, and it keeps
 the selected entry. The active recording does not appear until it is saved.
@@ -378,7 +386,7 @@ the selected entry in the table and in the open session:
 | `d` | Re-diarize the session. This also needs the speech model. A file session cannot: use Re-transcribe. A recording without separated speakers (no system lines, and mic lines recorded as `You`) cannot either. |
 | `t` | Re-transcribe the session. A source with speaker separation also gets its speakers again, so labels can change. |
 | `x` | Export the transcript. |
-| `delete` | Delete the session after confirmation. On a queued or running job, cancel it after confirmation. |
+| `delete` | Delete the session after confirmation; this also stops its audio when it plays. On a queued or running file job, cancel the job after confirmation. |
 | `pageup` / `pagedown`, `home` / `end` | Move the selection one page, or to the first or last entry; in an open session, scroll the transcript. |
 
 The title is stored in the `session.json` of the session as `title`, with
@@ -392,8 +400,10 @@ to keep the session or job. `q` and `ctrl+c` do not confirm these prompts.
 While a re-diarize, re-transcribe, rename, title, delete, or file job changes a
 session, that session is busy: its Edit title, Rename, Re-diarize,
 Re-transcribe, and Delete buttons are dimmed, and their keys show the notice
-`session busy`. Play and Export still act. On a session with a running revision
-job, the Delete button is `Cancel job…` and `delete` cancels the job.
+`session busy`. Play and Export still act. While a file job writes a new
+revision of the session, its Delete button is `Cancel job…` and `delete`
+cancels that file job. During `d`, `t`, a rename, a title, or a delete, the
+Delete button is dimmed and `delete` shows `session busy`.
 
 `x` opens the Export dialog. Press `tab` or click a format to choose `md`,
 `jsonl`, `srt`, or `txt`, and type the folder (default `~/Documents`). Press
