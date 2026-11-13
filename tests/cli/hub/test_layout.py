@@ -101,15 +101,16 @@ async def test_record_transcript_takes_the_full_width(tmp_path):
         created[0].release.set()
 
 
-async def test_library_transcript_takes_the_full_width_and_list_sits_above_it(tmp_path):
+async def test_library_open_session_transcript_takes_the_full_width(tmp_path):
     services, _created = _services(tmp_path)
     _write_sessions(tmp_path, 1)
     app = _app(tmp_path, services)
     async with app.run_test(size=(150, 45)) as pilot:
         await _open_library(pilot, app, 1)
+        await pilot.press("enter")
+        await pilot.pause()
+        assert not app.screen.query_one("#library-table-view").display
         assert app.screen.query_one("#transcript-scroll-content").size.width >= 140
-        listing = app.screen.query_one("#library-list-frame").region
-        assert listing.bottom <= app.screen.query_one("#library-transcript").region.y
 
 
 async def test_record_bar_wraps_twelve_speakers_and_keeps_warnings_last(tmp_path):
@@ -296,17 +297,19 @@ async def test_library_list_row_click_selects_after_the_list_scrolled(tmp_path):
     services, _created = _services(tmp_path)
     _write_sessions(tmp_path, 12)
     app = _app(tmp_path, services)
-    async with app.run_test(size=(150, 45)) as pilot:
+    async with app.run_test(size=(150, 20)) as pilot:
         await _open_library(pilot, app, 12)
         library = app.library_screen
         for _ in range(11):
             await pilot.press("down")
         await pilot.pause()
         scroll = app.screen.query_one("#library-list-scroll")
-        assert scroll.scroll_y == 4
+        # Each entry is two lines tall; the view shows the last entry at its bottom.
+        top = int(scroll.scroll_y)
+        assert top > 0
         await pilot.click("#library-list-scroll", offset=(4, 0))
         await pilot.pause()
-        assert library.selected_id == library.entries[4].entry_id
+        assert library.selected_id == library.entries[top // 2].entry_id
 
 
 async def test_library_rename_changes_every_speaker_with_that_name_in_one_revision(tmp_path):
@@ -459,35 +462,29 @@ async def test_every_input_keeps_a_long_value_visible_on_its_text_row(tmp_path, 
 
 
 @pytest.mark.parametrize("size", SIZES)
-async def test_library_action_row_keeps_each_busy_word_on_one_row(tmp_path, size):
+async def test_library_busy_session_dims_its_buttons_without_a_busy_word(tmp_path, size):
     services, _created = _services(tmp_path)
     _write_sessions(tmp_path, 1)
     app = _app(tmp_path, services)
     async with app.run_test(size=size) as pilot:
         await _open_library(pilot, app, 1)
         library = app.library_screen
+        await pilot.press("enter")
         app.try_acquire_session(library.selected_id, "test")
-        library._rebuild()
         app.refresh_view()
         await pilot.pause()
-        assert app.screen.query_one("#library-actions").region.height == 1
         assert _layout_problems(app) == []
-        for label in (
-            "[r] Rename… · busy",
-            "[d] Re-diarize · busy",
-            "[t] Re-transcribe · busy",
-            "[del] Delete… · busy",
-        ):
-            assert label in _screen_text(app)
+        assert "busy" not in _screen_text(app)
+        for button_id in ("library-rename", "library-retranscribe", "library-delete"):
+            assert app.screen.query_one(f"#{button_id}", HubButton).disabled, button_id
 
-        # A running revision job gives the widest row: delete cancels the job.
-        # The job poll saw the busy mark by now, so it does not list the entries again.
+        # A running revision job: delete cancels the job.
         await pilot.pause(0.15)
         job = FakeJob("file-1", tmp_path / "source.wav")
         library.entries = (replace(library.entries[0], job=job),)
-        library._draw_detail()
+        library.refresh_body()
         await pilot.pause()
-        assert "[del] Cancel job… · busy" in _screen_text(app)
+        assert "[del] Cancel job…" in _screen_text(app)
         assert _layout_problems(app) == []
 
 

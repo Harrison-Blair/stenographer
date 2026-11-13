@@ -40,7 +40,7 @@ def _write_session(data_root, started_at, *, finish=True):
     return writer.path
 
 
-def test_list_and_read_sessions_returns_metrics_renames_and_activity(tmp_path):
+def test_list_and_read_sessions_returns_metrics_renames_and_speakers(tmp_path):
     started = datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC)
     older = _write_session(tmp_path, started)
     newer = _write_session(tmp_path, started + timedelta(minutes=1))
@@ -62,10 +62,9 @@ def test_list_and_read_sessions_returns_metrics_renames_and_activity(tmp_path):
 
     assert [line.label for line in detail.lines] == ["Alice", "You", "Alice"]
     assert detail.talk_time == {"Alice": 1.5, "You": 0.5}
-    assert set(detail.activity) == {"mic", "system"}
-    assert detail.activity["mic"]
-    assert max(detail.activity["mic"]) > 0
-    assert max(detail.activity["system"]) == 0
+    # The summary lists the speakers by talk time, most first.
+    assert summary.speakers == ("Alice", "You")
+    assert summary.title is None and summary.title_source is None
 
 
 def test_revisions_preserve_originals_and_rename_current_lines(tmp_path):
@@ -112,24 +111,6 @@ def test_revisions_preserve_originals_and_rename_current_lines(tmp_path):
         )
     assert revision == "transcript.r10.jsonl"
     assert store.read(session.name).revision == revision
-
-
-def test_export_and_rename_do_not_decode_recorded_audio(tmp_path, monkeypatch):
-    from stenographer.lib.sessions import reader
-
-    session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
-    store = SessionStore(session.parent)
-
-    def no_decode(_path):
-        raise AssertionError("audio was decoded")
-
-    monkeypatch.setattr(reader, "_activity", no_decode)
-
-    exported = store.export(session.name, tmp_path / "exports", "md")
-    revision = store.rename_speaker(session.name, "speaker-1", "Bob")
-
-    assert "**Alice:**" in exported.read_text(encoding="utf-8")
-    assert revision == "transcript.r2.jsonl"
 
 
 def test_session_and_shared_exporters_write_all_formats_privately(tmp_path):
@@ -245,7 +226,6 @@ def test_partial_session_is_listed_and_read_without_crashing(tmp_path):
     assert sessions[0].interrupted
     assert detail.summary.interrupted
     assert len(detail.lines) == 1
-    assert detail.activity["mic"] == ()
 
 
 def test_mic_diarization_flag_survives_revisions_and_old_sessions_read_false(tmp_path):
@@ -397,15 +377,73 @@ def test_rename_label_refuses_without_a_new_revision(tmp_path, speaker_id, name,
     assert store.read(path.name).revision == revision
 
 
-def test_rename_label_does_not_decode_recorded_audio(tmp_path, monkeypatch):
-    from stenographer.lib.sessions import reader
-
+def test_set_title_stores_changes_and_removes_the_title_and_its_source(tmp_path):
     session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
-    store = SessionStore(session.parent)
+    store = SessionStore(tmp_path / "sessions")
+    before = json.loads((session / "session.json").read_text(encoding="utf-8"))
+    assert "title" not in before
 
-    def no_decode(_path):
-        raise AssertionError("audio was decoded")
+    store.set_title(session.name, "  Venue   booking call ")
+    metadata = json.loads((session / "session.json").read_text(encoding="utf-8"))
+    assert metadata == {**before, "title": "Venue booking call", "title_source": "user"}
+    summary = store.list_sessions()[0]
+    assert (summary.title, summary.title_source) == ("Venue booking call", "user")
 
-    monkeypatch.setattr(reader, "_activity", no_decode)
+    store.set_title(session.name, "Budget review", source="model")
+    summary = store.read(session.name).summary
+    assert (summary.title, summary.title_source) == ("Budget review", "model")
 
-    assert store.rename_label(session.name, "speaker-1", "Bob") == "transcript.r2.jsonl"
+    store.set_title(session.name, "   ")
+    metadata = json.loads((session / "session.json").read_text(encoding="utf-8"))
+    assert metadata == before
+    assert store.list_sessions()[0].title is None
+
+
+def test_a_title_survives_a_revision_and_a_session_without_session_json_gets_one(tmp_path):
+    started = datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC)
+    session = _write_session(tmp_path, started)
+    store = SessionStore(tmp_path / "sessions")
+    store.set_title(session.name, "Kept title")
+    detail = store.read(session.name)
+    store.write_revision(
+        session.name, detail.lines, method="rename", expected_revision=detail.revision
+    )
+    assert store.read(session.name).summary.title == "Kept title"
+
+    old = _write_session(tmp_path, started + timedelta(minutes=1))
+    (old / "session.json").unlink()
+    assert not store.read(old.name).summary.interrupted
+    store.set_title(old.name, "Old session")
+    summary = store.read(old.name).summary
+    assert summary.title == "Old session"
+    # The new session.json keeps the first transcript current: the session is not damaged.
+    assert not summary.interrupted
+    assert store.read(old.name).revision == "transcript.jsonl"
+
+
+def test_set_title_refuses_unreadable_metadata_and_keeps_it(tmp_path):
+    session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    store = SessionStore(tmp_path / "sessions")
+    (session / "session.json").write_text("[1, 2]", encoding="utf-8")
+    with pytest.raises(ValueError, match="not an object"):
+        store.set_title(session.name, "Lost")
+    assert (session / "session.json").read_text(encoding="utf-8") == "[1, 2]"
+
+
+def test_a_title_source_other_than_model_or_user_reads_as_none(tmp_path):
+    session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    metadata = json.loads((session / "session.json").read_text(encoding="utf-8"))
+    metadata.update(title="Imported", title_source="robot")
+    (session / "session.json").write_text(json.dumps(metadata), encoding="utf-8")
+    summary = SessionStore(tmp_path / "sessions").list_sessions()[0]
+    assert (summary.title, summary.title_source) == ("Imported", None)
+
+
+def test_search_matches_a_new_title_at_once(tmp_path):
+    session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    store = SessionStore(tmp_path / "sessions")
+    assert store.search("quarterly") == ()
+    store.set_title(session.name, "Quarterly planning")
+    assert store.search("QUARTERLY") == (session.name,)
+    store.set_title(session.name, "")
+    assert store.search("quarterly") == ()

@@ -7,6 +7,7 @@ import logging
 import os
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -41,6 +42,7 @@ class HubServices:
         files_engine_factory: Callable[..., FilesEngine] | None = None,
         device_query: Callable[[], list[tuple[str, str]]] | None = None,
         media_decoder: Callable[[Path], Generator[np.ndarray]] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._config = config
         self._platform = platform
@@ -51,6 +53,8 @@ class HubServices:
         self._player: subprocess.Popen | None = None
         self._player_session_id: str | None = None
         self._player_temp_path: Path | None = None
+        self._player_started_at = 0.0
+        self._clock = clock
         self._player_lock = threading.Lock()
         self._stopped_players: set[subprocess.Popen] = set()
         self._session: LiveSession | None = None
@@ -262,6 +266,7 @@ class HubServices:
             self._player = process
             self._player_session_id = session_id
             self._player_temp_path = mixed_path
+            self._player_started_at = self._clock()
             log.info(
                 fmt_event("hub", "session_playback_started", session_id=session_id, pid=process.pid)
             )
@@ -271,6 +276,13 @@ class HubServices:
                 name="stenographer-session-player",
                 daemon=True,
             ).start()
+
+    def session_playback(self) -> tuple[str, float] | None:
+        """Return the session that plays and the seconds since its player started, or ``None``."""
+        with self._player_lock:
+            if self._player is None or self._player_session_id is None:
+                return None
+            return self._player_session_id, self._clock() - self._player_started_at
 
     def stop_session_playback(self) -> None:
         with self._player_lock:

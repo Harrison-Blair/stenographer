@@ -274,8 +274,13 @@ def test_transcribe_an_m4a_without_ffmpeg_shows_the_needs_ffmpeg_message(tmp_pat
             await _open_dialog(pilot, app)
             await _search(pilot, "voice")
             await pilot.press("enter")
-            await _until(pilot, lambda: "\u00d7 failed · vo" in _rows(app)[0], "no failed row")
+            await _until(
+                pilot,
+                lambda: "\u00d7 failed" in _rows(app)[0] and "voice.m4a" in _rows(app)[0],
+                "no failed row",
+            )
             assert screen.selected_entry.job_name == "voice.m4a"
+            await pilot.press("enter")
             app.refresh_view()
             await pilot.pause()
             assert "\u00d7 needs ffmpeg" in _screen_text(app)

@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The Library screen: saved sessions and file jobs, search, detail, actions and export."""
+"""The Library screen: a table of sessions and file jobs, and one session on the full screen."""
 
 from __future__ import annotations
 
 import asyncio
 import itertools
 import logging
+import math
 import pathlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -15,7 +16,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from rich.console import Group
 from rich.text import Text
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Grid, Horizontal, VerticalScroll
 from textual.geometry import Region
 from textual.widgets import Input, Rule, Static
 
@@ -23,15 +24,15 @@ from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DOCTOR_STATE_GLYPHS
 from stenographer.cli.hub.export_dialog import ExportDialog
 from stenographer.cli.hub.hub_screen import HubScreen
+from stenographer.cli.hub.library_table import LibraryTable, TableRow
 from stenographer.cli.hub.rename_dialog import RenameDialog
+from stenographer.cli.hub.title_dialog import TitleDialog
 from stenographer.cli.hub.transcribe_dialog import TranscribeDialog
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.clock import Clock
 from stenographer.cli.hub.widgets.frame import Frame
 from stenographer.cli.hub.widgets.key_hints import KeyHints
 from stenographer.cli.hub.widgets.row_input import fit_input_to_row
-from stenographer.cli.hub.widgets.selectable_list import SelectableList
-from stenographer.cli.hub.widgets.sparkline import Sparkline
 from stenographer.cli.hub.widgets.speaker_bar import SpeakerBar
 from stenographer.cli.hub.widgets.status_token import StatusToken
 from stenographer.cli.hub.widgets.transcript_line import TranscriptRows
@@ -40,7 +41,6 @@ from stenographer.cli.shared.speaker_colors import speaker_color
 from stenographer.cli.shared.transcript_scroll import TranscriptScroll
 from stenographer.lib.logging.pipeline import fmt_event, log_failure
 from stenographer.lib.sessions.jobs import SessionJobs
-from stenographer.lib.sessions.models import SessionSummary
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -54,10 +54,18 @@ log = logging.getLogger(__name__)
 
 _FAILED_JOB_STATES = frozenset({"failed", "needs_ffmpeg"})
 _FAILED = DOCTOR_STATE_GLYPHS["fail"]
-_COLUMNS = f"  {'date':<12} {'dur':>7} {'kind':<4} {'spk':>3}  labels"
 _DIM = StatusToken.TONES["dim"]
-_SPARK_CELLS = 28
-# Buttons of the detail: ``(id, key, label, action, tone)``.
+_WARN = StatusToken.TONES["warn"]
+_DANGER = StatusToken.TONES["danger"]
+# Fixed slots: a value changes inside its slot and nothing beside it moves.
+_COUNT_SLOT = 3
+_SIZE_SLOT = 7
+_DUR_SLOT = 8
+_STATE_SLOT = 13
+_KIND_SLOT = 4
+_TALK_TIME_SLOT = 5
+_ACTION_GAP = 3
+# Buttons of the open session: ``(id, key, label, action, tone)``.
 _ACTIONS = (
     ("library-play", "p", "▶ Play", "session_playback", "default"),
     ("library-rename", "r", "Rename…", "session_rename", "default"),
@@ -66,6 +74,9 @@ _ACTIONS = (
     ("library-export", "x", "Export…", "session_export", "default"),
     ("library-delete", "del", "Delete…", "session_delete", "danger"),
 )
+# The Play label: ``▶ Play`` and ``■ Stop`` have the same width.
+_PLAY, _STOP = "▶ Play", "■ Stop"
+_POSITION_SLOT = len("00:00:00 / 00:00:00")
 
 
 ACTIVE_JOB_STATES = frozenset({"queued", "running"})
@@ -95,19 +106,33 @@ class LibraryEntry:
         return self.job is not None and self.job.state in ACTIVE_JOB_STATES
 
 
-class LibraryScreen(HubScreen):
-    """List recordings, file sessions and unfinished file jobs; act on the selected entry.
+def format_size(size: int) -> str:
+    """Return ``176 M`` below one gigabyte and ``1.6 G`` above; at most 7 cells to 999.9 G."""
+    megabytes = size / 1024**2
+    if round(megabytes) < 1024:
+        return f"{megabytes:.0f} M"
+    return f"{megabytes / 1024:.1f} G"
 
-    ``n`` opens the Transcribe a file dialog; its job shows in the list at once.
+
+class LibraryScreen(HubScreen):
+    """List recordings, file sessions and unfinished file jobs; open one on the full screen.
+
+    The table and the open session are two views of one screen. The keys of the actions
+    act on the selected entry in both views. ``n`` opens the Transcribe a file dialog;
+    its job shows in the table at once.
     """
 
     SCREEN_TITLE = "Library"
     BINDINGS: ClassVar[list[Binding | tuple[str, str, str]]] = [
-        ("up", "session_move(-1)", "Previous entry"),
-        ("down", "session_move(1)", "Next entry"),
+        ("up", "library_move(-1)", "Previous entry, or scroll the session up"),
+        ("down", "library_move(1)", "Next entry, or scroll the session down"),
+        ("enter", "open_session", "Open the session"),
+        Binding(
+            "escape", "library_back", "Back to the table, or clear the search", key_display="esc"
+        ),
         ("slash", "library_search", "Search titles and transcripts"),
-        ("escape", "clear_search", "Clear the search"),
         ("p", "session_playback", "Play or stop the session"),
+        ("e", "session_title", "Edit the title"),
         ("r", "session_rename", "Rename a speaker"),
         ("d", "session_rediarize", "Re-diarize the session"),
         ("t", "session_retranscribe", "Re-transcribe the session"),
@@ -115,24 +140,38 @@ class LibraryScreen(HubScreen):
         Binding(
             "delete", "session_delete", "Delete the session or cancel its job", key_display="del"
         ),
-        ("pageup", "scroll_page(-1)", "Scroll transcript up one page"),
-        ("pagedown", "scroll_page(1)", "Scroll transcript down one page"),
-        ("home", "scroll_home", "Scroll to transcript start"),
-        ("end", "scroll_end", "Scroll to transcript end"),
+        ("pageup", "scroll_page(-1)", "Page up"),
+        ("pagedown", "scroll_page(1)", "Page down"),
+        ("home", "scroll_home", "First entry, or the transcript start"),
+        ("end", "scroll_end", "Last entry, or the transcript end"),
         ("n", "transcribe_file", "Transcribe a file"),
     ]
     DEFAULT_CSS = """
-    LibraryScreen #library-body { height: 1fr; }
+    LibraryScreen .library-view { height: 1fr; }
+    LibraryScreen #library-session { display: none; }
+    LibraryScreen.-open #library-session { display: block; }
+    LibraryScreen.-open #library-table-view { display: none; }
     LibraryScreen #library-search-row { height: 1; }
     LibraryScreen #library-search { width: 1fr; }
-    LibraryScreen #library-columns { height: 1; color: #8b93a1; }
-    LibraryScreen #library-list-scroll { height: 8; }
-    LibraryScreen #library-detail-head { height: 1; }
-    LibraryScreen #library-detail-title { width: 1fr; text-style: bold; color: ansi_default; }
-    LibraryScreen #library-detail-state { width: auto; }
-    LibraryScreen #library-activity { height: auto; }
-    LibraryScreen #library-activity Sparkline { width: auto; margin-right: 2; }
-    LibraryScreen #library-actions { height: 1; margin-top: 1; }
+    LibraryScreen #library-head-gap { width: 1fr; }
+    LibraryScreen #library-count { width: auto; color: #8b93a1; }
+    LibraryScreen #library-columns { height: 1; }
+    LibraryScreen #library-list-scroll { height: 1fr; scrollbar-gutter: stable; }
+    LibraryScreen #library-session-head { height: 1; }
+    LibraryScreen #library-session-meta { width: 1fr; text-align: right; }
+    LibraryScreen #library-title-row { height: 1; }
+    LibraryScreen #library-detail-title {
+        width: 1fr;
+        text-style: bold;
+        color: ansi_default;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
+    }
+    LibraryScreen #library-actions {
+        height: auto;
+        grid-rows: 1;
+        grid-columns: auto;
+    }
     LibraryScreen #library-rule { margin: 0; color: #3a4150; }
     LibraryScreen #library-transcript { height: 1fr; }
     LibraryScreen .library-hints { height: 1; }
@@ -148,6 +187,8 @@ class LibraryScreen(HubScreen):
         self.entries: tuple[LibraryEntry, ...] = ()
         self.detail: SessionDetail | None = None
         self.search_query = ""
+        self.opened = False
+        self._open_after_select = False
         self._all_count = 0
         self._list_error: str | None = None
         self._selected_id: str | None = None
@@ -158,6 +199,7 @@ class LibraryScreen(HubScreen):
         self._job_listed_at: dict[str, datetime] = {}
         self._job_states: dict[str, str] = {}
         self._job_owners: dict[str, tuple[str, str]] = {}
+        self._session_work: dict[str, str] = {}
         self._removed_jobs: set[str] = set()
         self._owner_ids = itertools.count(1)
         self._pending_select: str | None = None
@@ -168,68 +210,95 @@ class LibraryScreen(HubScreen):
         self._poll_key: object = None
         self._rows_key: object = None
         self._row_in_view: int | None = None
-        self._storage_shown: str | None = None
         self._transcript_key: object = None
+        self._actions_key: object = None
+        self._play_timer = None
         self._rows = TranscriptRows()
 
     def compose_body(self) -> ComposeResult:
-        with Vertical(id="library-body"):
-            with Frame(id="library-list-frame"):
-                with Horizontal(id="library-search-row"):
+        with Frame(id="library-table-view", classes="library-view"):
+            with Horizontal(id="library-search-row"):
+                yield HubButton(
+                    "search", key="/", action="library_search", id="library-search-button"
+                )
+                yield Input(placeholder="search", id="library-search")
+                yield HubButton(
+                    "+ Transcribe a file…",
+                    key="n",
+                    action="transcribe_file",
+                    tone="primary",
+                    id="library-transcribe",
+                )
+                yield Static("", id="library-head-gap", markup=False)
+                yield Static("", id="library-count", markup=False)
+            yield Static("", id="library-columns", markup=False)
+            with VerticalScroll(id="library-list-scroll", can_focus=False):
+                yield LibraryTable(id="library-list")
+            yield KeyHints(footer=False, id="library-list-hints", classes="library-hints")
+        with Frame(id="library-session", classes="library-view"):
+            with Horizontal(id="library-session-head"):
+                yield HubButton(
+                    "← Library",
+                    key="esc",
+                    action="library_back",
+                    tone="primary",
+                    tight=True,
+                    id="library-back",
+                )
+                yield Static("", id="library-session-meta", markup=False)
+            with Horizontal(id="library-title-row"):
+                yield Static("", id="library-detail-title", markup=False)
+                yield HubButton(
+                    "Edit title…",
+                    key="e",
+                    action="session_title",
+                    tight=True,
+                    id="library-title-button",
+                )
+            yield SpeakerBar(id="library-speakers")
+            with Grid(id="library-actions"):
+                for button_id, key, label, action, tone in _ACTIONS:
                     yield HubButton(
-                        "search",
-                        key="/",
-                        action="library_search",
-                        id="library-search-button",
+                        label, key=key, action=action, tone=tone, tight=True, id=button_id
                     )
-                    yield Input(placeholder="search", id="library-search")
-                    yield HubButton(
-                        "+ Transcribe a file…",
-                        key="n",
-                        action="transcribe_file",
-                        tone="primary",
-                        id="library-transcribe",
-                    )
-                    yield KeyHints(footer=False, id="library-list-hints", classes="library-hints")
-                yield Static(_COLUMNS, id="library-columns", markup=False)
-                with VerticalScroll(id="library-list-scroll", can_focus=False):
-                    yield SelectableList(id="library-list")
-            with Frame(id="library-detail-frame", variant="fill"):
-                with Horizontal(id="library-detail-head"):
-                    yield Static("", id="library-detail-title", markup=False)
-                    yield Static("", id="library-detail-state", markup=False)
-                yield SpeakerBar(id="library-speakers")
-                with Horizontal(id="library-activity"):
-                    yield Sparkline("mic", width=_SPARK_CELLS, id="library-mic")
-                    yield Sparkline("sys", width=_SPARK_CELLS, color="#ffaf5f", id="library-sys")
-                with Horizontal(id="library-actions"):
-                    for button_id, key, label, action, tone in _ACTIONS:
-                        yield HubButton(
-                            label, key=key, action=action, tone=tone, tight=True, id=button_id
-                        )
-                yield Rule(id="library-rule")
-                yield TranscriptScroll(id="library-transcript", can_focus=False)
-                yield KeyHints(footer=False, id="library-detail-hints", classes="library-hints")
+            yield Rule(id="library-rule")
+            yield TranscriptScroll(id="library-transcript", can_focus=False)
 
     def on_mount(self) -> None:
         search = self.query_one("#library-search", Input)
         fit_input_to_row(search)
         search.display = False
+        # Inline: the app rules of HubButton outrank screen CSS.
+        self.query_one("#library-title-button", HubButton).styles.margin = (0, 0, 0, 2)
         self.query_one("#library-list-hints", KeyHints).set_hints(
-            ("↑↓", "select"), ("del", "delete")
-        )
-        self.query_one("#library-detail-hints", KeyHints).set_hints(
-            ("PgUp/Dn", "page"), ("Home/End", "top/end")
+            ("↑↓", "select"), ("enter", "open"), ("PgUp/Dn", "page")
         )
         self.set_interval(0.1, self.poll_jobs)
 
     def footer_hints(self) -> tuple[tuple[str, str], ...]:
         if self.typing:
             return (("enter", "keep"), ("esc", "clear"))
+        if self.opened:
+            entry = self.selected_entry
+            delete = "cancel job" if entry is not None and entry.job_active else "delete"
+            return (
+                ("esc", "back"),
+                ("p", "play"),
+                ("e", "title"),
+                ("r", "rename"),
+                ("d", "re-diarize"),
+                ("t", "re-transcribe"),
+                ("x", "export"),
+                ("del", delete),
+                ("↑↓", "line"),
+                ("PgUp/Dn", "page"),
+            )
         return (
+            ("enter", "open"),
             ("n", "transcribe"),
             ("/", "search"),
             ("p", "play"),
+            ("e", "title"),
             ("r", "rename"),
             ("d", "re-diarize"),
             ("t", "re-transcribe"),
@@ -253,28 +322,87 @@ class LibraryScreen(HubScreen):
     def selected_entry(self) -> LibraryEntry | None:
         return None if self._selected_id is None else self.entry(self._selected_id)
 
+    # Views
+
+    def action_open_session(self) -> None:
+        if self.selected_entry is None:
+            return
+        self._set_opened(True)
+
+    def action_library_back(self) -> None:
+        if self.opened:
+            self._set_opened(False)
+        else:
+            self.action_clear_search()
+
+    def _set_opened(self, opened: bool) -> None:
+        if opened == self.opened:
+            return
+        self.opened = opened
+        self.set_class(opened, "-open")
+        self._row_in_view = None
+        self._rows_key = None
+        self.app.refresh_view()
+        # The view that shows gets its widths in the next layout.
+        self.call_after_refresh(self._fit_after_layout)
+
+    def action_library_move(self, offset: int) -> None:
+        if self.opened:
+            self._transcript().scroll_line(offset)
+        else:
+            self.action_session_move(offset)
+
+    def action_scroll_page(self, offset: int) -> None:
+        if self.opened:
+            super().action_scroll_page(offset)
+        else:
+            page = max(1, self.query_one("#library-list-scroll").size.height // 2)
+            self._move_to(offset * page, clamp=True)
+
+    def action_scroll_home(self) -> None:
+        if self.opened:
+            super().action_scroll_home()
+        elif self.entries:
+            self.select_entry(self.entries[0].entry_id)
+
+    def action_scroll_end(self) -> None:
+        if self.opened:
+            super().action_scroll_end()
+        elif self.entries:
+            self.select_entry(self.entries[-1].entry_id)
+
+    def _transcript(self) -> TranscriptScroll:
+        return self.query_one("#library-transcript", TranscriptScroll)
+
     # Drawing
 
     def refresh_body(self) -> None:
-        self._draw_list()
-        self._draw_detail()
-        storage = self._storage_summary()
-        if storage != self._storage_shown:
-            self._storage_shown = storage
-            self.query_one("#library-list-frame", Frame).border_title = Text(storage)
+        self._draw_head()
+        if self.opened:
+            self._draw_session()
+        else:
+            self._draw_list()
 
-    def _storage_summary(self) -> str:
-        count = self._all_count
+    def _draw_head(self) -> None:
         total = sum(summary.audio_size_bytes for summary in self.summaries)
-        text = f"{count} {'entry' if count == 1 else 'entries'} · {self._format_size(total)} audio"
-        if self.store is not None:
-            root = self.store.root
-            home = pathlib.Path.home()
-            text += f" · ~/{root.relative_to(home)}" if root.is_relative_to(home) else f" · {root}"
-        return text
+        count = f"{self._all_count:>{_COUNT_SLOT}}"
+        size = f"{format_size(total):>{_SIZE_SLOT}}"
+        # An open search takes the free cells of the row; the medium tier then drops the words.
+        searching = self.query_one("#library-search", Input).display
+        short = self.tier == "narrow" or (searching and self.tier == "medium")
+        text = f"{count} · {size}" if short else f"{count} entries · {size} audio"
+        self.query_one("#library-head-gap").display = not searching
+        update_changed(self.query_one("#library-count", Static), text)
+        transcribe = self.query_one("#library-transcribe", HubButton)
+        label = "+ Transcribe…" if self.tier == "narrow" else "+ Transcribe a file…"
+        if transcribe.label.plain != HubButton.label_text(label, "n").plain:
+            transcribe.set_label(label)
 
     def _draw_list(self) -> None:
-        rows = tuple((self._row_text(entry), "") for entry in self.entries)
+        tier = self.tier
+        table = self.query_one("#library-list", LibraryTable)
+        width = table.size.width
+        rows = tuple(self._table_row(entry) for entry in self.entries)
         index = next(
             (i for i, entry in enumerate(self.entries) if entry.entry_id == self._selected_id),
             None,
@@ -284,124 +412,194 @@ class LibraryScreen(HubScreen):
             self._search_matches is None or self._search_matches[0] != query
         )
         message = self._list_error or ("Searching…" if searching else "")
-        if message:
-            rows += ((Text(message, style=_DIM), ""),)
-        elif not rows:
+        if not message and not rows:
             message = "No matches." if query else "No saved sessions."
-            rows = ((Text(message, style=_DIM), ""),)
             index = None
-        key = (tuple(row[0].plain for row in rows), index)
+        message_text = Text(message, style=_DIM) if message else None
+        update_changed(
+            self.query_one("#library-columns", Static), LibraryTable.heading(tier, width)
+        )
+        key = (rows, index, tier, message)
         if key != self._rows_key:
             self._rows_key = key
-            self.query_one("#library-list", SelectableList).set_rows(rows, index)
+            table.set_rows(rows, index, tier=tier, message=message_text)
             if index is not None and index != self._row_in_view:
-                # The list shows about eight rows, so a selection move can leave the view.
                 # Only a move scrolls: a job's progress changes its row text, not the selection.
                 self.call_after_refresh(self._show_row, index)
             self._row_in_view = index
 
     def _show_row(self, index: int) -> None:
         self.query_one("#library-list-scroll", VerticalScroll).scroll_to_region(
-            Region(0, index, 1, 1), animate=False, immediate=True
+            Region(0, index * 2, 1, 2), animate=False, immediate=True
         )
 
-    def _row_text(self, entry: LibraryEntry) -> Text:
+    def on_resize(self) -> None:
+        # HubScreen.on_resize redraws first; the heading and the buttons then fit the
+        # widths of the new layout.
+        self.call_after_refresh(self._fit_after_layout)
+
+    def _fit_after_layout(self) -> None:
+        if self.opened:
+            self._fit_actions()
+        else:
+            table = self.query_one("#library-list", LibraryTable)
+            update_changed(
+                self.query_one("#library-columns", Static),
+                LibraryTable.heading(self.tier, table.size.width),
+            )
+
+    def _when(self, entry: LibraryEntry) -> datetime:
+        if entry.summary is not None:
+            return entry.summary.started_at.astimezone()
+        return (self._job_listed_at.get(entry.job.id) or datetime.now(UTC)).astimezone()
+
+    def _duration(self, entry: LibraryEntry) -> Text:
+        """Return the job's ``queued`` or percent, else the duration of the session."""
+        job = entry.job
+        if entry.job_active:
+            value = "queued" if job.state == "queued" else f"{job.progress.percent}%"
+            return Text(value, style=_WARN)
+        if entry.summary is None:
+            return Text("—", style=_DIM)
+        return Text(Clock.duration(max(0, entry.summary.duration_seconds)))
+
+    def _title(self, entry: LibraryEntry) -> str | None:
+        """Return the title; a file entry without one shows its file name."""
+        summary = entry.summary
+        if summary is None:
+            return entry.job_name
+        if summary.title is not None:
+            return summary.title
+        return summary.source_name if summary.kind == "file" else None
+
+    def _table_row(self, entry: LibraryEntry) -> TableRow:
+        summary = entry.summary
+        size = (
+            Text(format_size(summary.audio_size_bytes))
+            if summary is not None
+            else Text("—", style=_DIM)
+        )
+        return TableRow(
+            date=f"{self._when(entry):%d %b %H:%M}",
+            dur=self._duration(entry),
+            kind=entry.kind,
+            speakers=summary.speakers if summary is not None else (),
+            title=self._title(entry),
+            size=size,
+            state=self._state_word(entry),
+            glyph=self._state_glyph(entry),
+        )
+
+    def _state_word(self, entry: LibraryEntry) -> Text:
+        """Return the state of the wide table: a word; a fault also has its glyph."""
         summary = entry.summary
         job = entry.job
-        if summary is not None:
-            when = summary.started_at.astimezone()
-            dur = Clock.duration(max(0, summary.duration_seconds))
-            spk = str(summary.speaker_count)
-        else:
-            when = (self._job_listed_at.get(job.id) or datetime.now(UTC)).astimezone()
-            dur = "—"
-            spk = "—"
-        dur_style = None
-        if entry.job_active:
-            dur = "queued" if job.state == "queued" else f"{job.progress.percent}%"
-            dur_style = StatusToken.TONES["warn"]
-        text = Text(f"{when:%d %b %H:%M} ")
-        text.append(f"{dur:>7}", style=dur_style)
-        text.append(f" {entry.kind:<4} {spk:>3}  ")
         if summary is None:
             if job.state in _FAILED_JOB_STATES:
-                danger = StatusToken.TONES["danger"]
-                text.append(f"{_FAILED} failed · {entry.job_name}", style=danger)
-            else:
-                text.append(entry.job_name)
-        elif summary.kind == "file":
-            text.append(summary.source_name or "file")
-        elif summary.interrupted:
-            text.append("! interrupted", style=StatusToken.TONES["danger"])
-        else:
-            text.append(summary.label_state)
-        return text
+                return Text(f"{_FAILED} failed", style=_DANGER)
+            return Text("transcribe" if entry.job_active else job.state, style=_WARN)
+        if entry.job_active:
+            return Text("re-transcribe", style=_WARN)
+        work = self._session_work.get(summary.session_id)
+        if work is not None:
+            return Text(work, style=_WARN)
+        if summary.interrupted:
+            return Text("! interrupted", style=_DANGER)
+        return Text(summary.label_state)
 
-    def _draw_detail(self) -> None:
+    @staticmethod
+    def _state_glyph(entry: LibraryEntry) -> Text:
+        """Return the glyph of an interrupted session or a failed job, else nothing."""
+        if entry.summary is None:
+            failed = entry.job.state in _FAILED_JOB_STATES
+            return Text(_FAILED if failed else "", style=f"bold {_DANGER}")
+        return Text("!" if entry.summary.interrupted else "", style=f"bold {_DANGER}")
+
+    # The open session
+
+    def _draw_session(self) -> None:
         entry = self.selected_entry
-        title, state = self._detail_head(entry)
-        update_changed(self.query_one("#library-detail-title", Static), title)
-        update_changed(self.query_one("#library-detail-state", Static), state)
-        detail = self.detail if entry is not None and entry.summary is not None else None
-        recording = detail is not None and detail.summary.kind == "rec"
+        if entry is None:
+            return
+        detail = self.detail if entry.summary is not None else None
+        update_changed(self.query_one("#library-session-meta", Static), self._session_meta(entry))
+        title = self._title(entry)
+        update_changed(
+            self.query_one("#library-detail-title", Static),
+            Text(title) if title is not None else Text("—", style=_DIM),
+        )
         speakers = self.query_one("#library-speakers", SpeakerBar)
-        speakers.set_items(self._speaker_items(detail) if detail is not None else ())
-        speakers.display = detail is not None
-        for spark_id, source in (("#library-mic", "mic"), ("#library-sys", "system")):
-            spark = self.query_one(spark_id, Sparkline)
-            spark.display = recording
-            if recording:
-                spark.set_values(self._resample(detail.activity.get(source, ())))
+        items = self._speaker_items(detail) if detail is not None else ()
+        speakers.set_items(items, speakers=len(items), max_rows=self._speaker_rows_allowed())
         self._draw_buttons(entry)
         self._draw_transcript(entry, detail)
 
-    def _detail_head(self, entry: LibraryEntry | None) -> tuple[str, Text]:
-        if entry is None:
-            return ("No entry selected." if not self.entries else "", Text(""))
+    def _speaker_rows_allowed(self) -> int:
+        """Return one row in a short or narrow terminal, else two (as on Record)."""
+        return 1 if self.app.size.height < 28 or self.tier == "narrow" else 2
+
+    def _session_meta(self, entry: LibraryEntry) -> Text:
+        """Return ``state · date · duration · kind · size``; each changing value has a slot."""
+        summary = entry.summary
+        dur = self._duration(entry)
+        dur = Text(" " * max(0, _DUR_SLOT - dur.cell_len)).append_text(dur)
+        sep = Text(" · ", style=_DIM)
+        when = self._when(entry)
+        if self.tier == "narrow":
+            text = self._state_glyph(entry)
+            text.pad_left(1 - text.cell_len)
+            return Text.assemble(text, " ", f"{when:%d %b %H:%M}", sep, dur)
+        state = self._session_state(entry)
+        state.pad_left(_STATE_SLOT - state.cell_len)
+        date = f"{when:%d %b %Y %H:%M}" if self.tier == "wide" else f"{when:%d %b %H:%M}"
+        size = format_size(summary.audio_size_bytes) if summary is not None else "—"
+        return Text.assemble(
+            state,
+            sep,
+            date,
+            sep,
+            dur,
+            sep,
+            f"{entry.kind:<{_KIND_SLOT}}",
+            sep,
+            f"{size:>{_SIZE_SLOT}}",
+        )
+
+    def _session_state(self, entry: LibraryEntry) -> Text:
         job = entry.job
         summary = entry.summary
-        if summary is None:
-            when = (self._job_listed_at.get(job.id) or datetime.now(UTC)).astimezone()
-            title = f"{when:%d %b %Y · %H:%M} · file · {entry.job_name}"
-            return title, self._job_state(job)
-        when = summary.started_at.astimezone()
-        title = f"{when:%d %b %Y · %H:%M} · {Clock.duration(max(0, summary.duration_seconds))} · "
-        title += "file" if summary.kind == "file" else "recording"
-        if entry.job_active:
-            state = self._job_state(job)
-            state.append(f" · {entry.job_name}", style=_DIM)
-        elif summary.interrupted:
-            state = StatusToken.text("!", "interrupted", "danger")
-        elif summary.label_state == "live":
+        if job is not None and (summary is None or entry.job_active):
+            if job.state == "queued":
+                return Text("queued", style=_WARN)
+            if job.state == "running":
+                # The percent shows in the duration slot.
+                return Text("transcribing", style=_WARN)
+            if job.state in _FAILED_JOB_STATES:
+                return Text(f"{_FAILED} failed", style=_DANGER)
+            return Text(job.state, style=_DIM)
+        work = self._session_work.get(summary.session_id)
+        if work is not None:
+            return Text(work, style=_WARN)
+        if summary.interrupted:
+            return Text("! interrupted", style=_DANGER)
+        if summary.label_state == "live":
             shown = summary.kind != "file" or summary.speaker_pass_failed
-            state = Text("live labels" if shown else "", style=_DIM)
-        else:
-            state = Text(summary.label_state, style=StatusToken.TONES["ok"])
-        return title, state
-
-    @staticmethod
-    def _job_state(job) -> Text:
-        if job.state == "queued":
-            return StatusToken.text("◌", "queued", "warn")
-        if job.state == "running":
-            return StatusToken.text("▶", f"transcribing {job.progress.percent}%", "warn")
-        if job.state in _FAILED_JOB_STATES:
-            return StatusToken.text(_FAILED, "failed", "danger")
-        return StatusToken.text("■", job.state, "dim")
+            return Text("live labels" if shown else "", style=_DIM)
+        return Text(summary.label_state, style=StatusToken.TONES["ok"])
 
     def _speaker_items(self, detail: SessionDetail) -> tuple[Text, ...]:
         ids = self._speaker_ids(detail)
         items: list[Text] = []
-        for label, seconds in detail.talk_time.items():
+        for label in detail.summary.speakers:
             speaker_id = ids[label]
             color = speaker_color(
                 speaker_id, tuple(ids.values()), source=self._source_of(detail, label)
             )
             item = Text()
             item.append(label, style=f"bold {color}")
-            item.append(f" {Clock.duration(max(0, seconds))}")
+            item.append(f" {Clock.talk_time(max(0, detail.talk_time[label])):>{_TALK_TIME_SLOT}}")
             items.append(item)
-        return tuple(items) or (Text("no speakers", style=_DIM),)
+        return tuple(items)
 
     @staticmethod
     def _speaker_ids(detail: SessionDetail) -> dict[str, str]:
@@ -414,38 +612,103 @@ class LibraryScreen(HubScreen):
     def _source_of(detail: SessionDetail, label: str) -> str | None:
         return next((line.source for line in detail.lines if line.label == label), None)
 
-    def _draw_buttons(self, entry: LibraryEntry | None) -> None:
-        session_id = entry.session_id if entry is not None else None
+    def _play_label(self, entry: LibraryEntry) -> str:
+        """Return ``▶ Play`` or ``■ Stop`` and, in the wide and medium tiers, the position."""
+        summary = entry.summary
+        if summary is None:
+            return _PLAY if self.tier == "narrow" else f"{_PLAY} {'':{_POSITION_SLOT}}"
+        playback = self._playback()
+        playing = playback is not None and playback[0] == summary.session_id
+        label = _STOP if playing else _PLAY
+        if self.tier == "narrow":
+            return label
+        duration = max(0.0, summary.duration_seconds)
+        position = min(playback[1], duration) if playing else 0.0
+        return f"{label} {Clock.format(position)} / {Clock.format(duration)}"
+
+    def _playback(self) -> tuple[str, float] | None:
+        playback = getattr(self.app.services, "session_playback", None)
+        return playback() if playback is not None else None
+
+    def _draw_buttons(self, entry: LibraryEntry) -> None:
+        session_id = entry.session_id
         busy = session_id is not None and self.app.is_busy(session_id)
-        labels: dict[str, tuple[str, bool]] = {}
-        for button_id, _key, label, _action, _tone in _ACTIONS:
-            labels[button_id] = (label, session_id is None)
-        if session_id is not None:
-            if self._detail_id != session_id or self.detail is None:
-                labels["library-rename"] = ("Rename…", True)
-            for button_id in ("library-rename", "library-rediarize", "library-retranscribe"):
-                if busy:
-                    labels[button_id] = (f"{labels[button_id][0]} · busy", True)
-            if entry.kind == "file":
-                labels["library-rediarize"] = ("Re-diarize", True)
-            elif self._rediarize_refusal(entry) is not None:
-                labels["library-rediarize"] = (labels["library-rediarize"][0], True)
-            if entry.job_active:
-                labels["library-delete"] = ("Cancel job… · busy", False)
-            elif busy:
-                labels["library-delete"] = ("Delete… · busy", True)
-        elif entry is not None:
-            labels["library-delete"] = (
-                ("Cancel job…", False) if entry.job_active else ("Remove", False)
-            )
-        for button_id, (label, disabled) in labels.items():
+        none = session_id is None
+        loaded = not none and self._detail_id == session_id and self.detail is not None
+        rediarize_off = none or entry.kind == "file" or self._rediarize_refusal(entry) is not None
+        if entry.job_active:
+            delete = ("Cancel job…", False)
+        elif none:
+            delete = ("Remove", False)
+        else:
+            delete = ("Delete…", busy)
+        states = {
+            "library-play": (self._play_label(entry), none),
+            "library-rename": ("Rename…", none or busy or not loaded),
+            "library-rediarize": ("Re-diarize", rediarize_off or busy),
+            "library-retranscribe": ("Re-transcribe", none or busy),
+            "library-export": ("Export…", none),
+            "library-delete": delete,
+            "library-title-button": (
+                "Title…" if self.tier == "narrow" else "Edit title…",
+                none or busy,
+            ),
+        }
+        for button_id, (label, disabled) in states.items():
             button = self.query_one(f"#{button_id}", HubButton)
-            if str(button.label) != str(HubButton.label_text(label, button.key)):
+            if button.label.plain != HubButton.label_text(label, button.key).plain:
                 button.set_label(label)
             button.disabled = disabled
+        self._fit_actions()
 
-    def _draw_transcript(self, entry: LibraryEntry | None, detail: SessionDetail | None) -> None:
-        if entry is not None and entry.summary is None:
+    def _fit_actions(self) -> None:
+        """Put the buttons in the fewest rows that fit: one row in the narrow tier, else two.
+
+        The buttons that do not fit hide from the end; their keys still act.
+        """
+        grid = self.query_one("#library-actions", Grid)
+        width = grid.content_size.width
+        buttons = list(grid.query(HubButton).results(HubButton))
+        widths = [button.label.cell_length for button in buttons]
+        key = (width, tuple(widths), self.tier)
+        # No width yet, or the size line below 60x16: the next resize or open fits again.
+        if not width or key == self._actions_key:
+            return
+        self._actions_key = key
+        rows = 1 if self.tier == "narrow" else 2
+        shown, columns = self._action_grid(widths, width, rows)
+        grid.styles.grid_size_columns = columns
+        # Explicit widths: an ``auto`` column does not count the margin of its button.
+        # The last column has no gap after it.
+        cells = self._column_cells(widths[:shown], columns)
+        grid.styles.grid_columns = " ".join(
+            str(cell + (_ACTION_GAP if column < columns - 1 else 0))
+            for column, cell in enumerate(cells)
+        )
+        for index, button in enumerate(buttons):
+            button.display = index < shown
+            last = index % columns == columns - 1
+            # Inline: the app rules of HubButton outrank screen CSS.
+            button.styles.margin = (0, 0 if last else _ACTION_GAP, 0, 0)
+
+    @staticmethod
+    def _action_grid(widths: list[int], width: int, rows: int) -> tuple[int, int]:
+        """Return how many buttons show and in how many columns: most buttons, fewest rows."""
+        for shown in range(len(widths), 0, -1):
+            for columns in range(shown, 0, -1):
+                if math.ceil(shown / columns) > rows:
+                    break
+                cells = LibraryScreen._column_cells(widths[:shown], columns)
+                if sum(cells) + _ACTION_GAP * (columns - 1) <= width:
+                    return shown, columns
+        return 1, 1
+
+    @staticmethod
+    def _column_cells(widths: list[int], columns: int) -> list[int]:
+        return [max(widths[column::columns]) for column in range(columns)]
+
+    def _draw_transcript(self, entry: LibraryEntry, detail: SessionDetail | None) -> None:
+        if entry.summary is None:
             job = entry.job
             lines = tuple(job.progress.completed_lines)
             message = (
@@ -456,19 +719,30 @@ class LibraryScreen(HubScreen):
             message = "This session has no transcript lines."
         else:
             lines = ()
-            message = self._detail_error or ("Loading…" if entry is not None else "")
+            message = self._detail_error or "Loading…"
         key = (lines, message)
         if key == self._transcript_key:
             return
         self._transcript_key = key
         ids = tuple(dict.fromkeys(line.speaker_id for line in lines))
         rows: list = self._rows.rows(lines, ids)
-        failed = (
-            entry is not None and entry.summary is None and entry.job.state in _FAILED_JOB_STATES
-        )
+        failed = entry.summary is None and entry.job.state in _FAILED_JOB_STATES
         if message and (not rows or failed):
             rows.insert(0, Text(message, style=_DIM))
-        self.query_one("#library-transcript", TranscriptScroll).update_content(Group(*rows))
+        self._transcript().update_content(Group(*rows))
+
+    # Play position
+
+    def _follow_playback(self) -> None:
+        """Redraw the Play position while a player runs; stop the timer when none runs."""
+        if self._playback() is None:
+            if self._play_timer is not None:
+                self._play_timer.stop()
+                self._play_timer = None
+        elif self._play_timer is None:
+            self._play_timer = self.set_interval(0.25, self._follow_playback)
+        if self.opened and self.selected_entry is not None and self.app.is_running:
+            self._draw_buttons(self.selected_entry)
 
     # Loading
 
@@ -513,8 +787,13 @@ class LibraryScreen(HubScreen):
         self.loaded = True
         select, self._pending_select = self._pending_select, None
         self._rebuild()
-        if select is not None and not self.select_entry(select):
-            app.notify(f"Session {select} was not found.", severity="warning")
+        opening, self._open_after_select = self._open_after_select, False
+        if select is not None:
+            if self.select_entry(select):
+                if opening:
+                    self._set_opened(True)
+            else:
+                app.notify(f"Session {select} was not found.", severity="warning")
         self._load_detail()
         app.refresh_view()
         if self._list_again or query != self.search_query.strip():
@@ -584,6 +863,9 @@ class LibraryScreen(HubScreen):
             self._selected_id, self._follow_select = self._follow_select, None
         if self.entry(self._selected_id or "") is None:
             self._selected_id = self.entries[0].entry_id if self.entries else None
+            # The open session is gone, for example deleted: show the table.
+            if self.opened and self.is_mounted:
+                self._set_opened(False)
 
     def _load_detail(self) -> None:
         entry = self.selected_entry
@@ -662,8 +944,7 @@ class LibraryScreen(HubScreen):
             self._poll_key = key
             self._rebuild()
             self._load_detail()
-            self._draw_list()
-            self._draw_detail()
+            self.refresh_body()
 
     def _job_ended(self, job) -> None:
         target = self._job_targets.get(job.id)
@@ -720,18 +1001,27 @@ class LibraryScreen(HubScreen):
         return True
 
     def show_session(self, session_id: str) -> None:
-        """Select a session; reload the list first when it is not in it."""
-        if not self.select_entry(session_id):
+        """Select and open a session; reload the list first when it is not in it."""
+        if self.select_entry(session_id):
+            self._set_opened(True)
+        else:
+            self._open_after_select = True
             self.load_sessions(select=session_id)
         self.app.refresh_view()
 
     def action_session_move(self, offset: int) -> None:
+        self._move_to(offset)
+
+    def _move_to(self, offset: int, *, clamp: bool = False) -> None:
+        """Select the entry ``offset`` rows away; it wraps around unless ``clamp``."""
         if not self.entries:
             return
         index = next(
             (i for i, entry in enumerate(self.entries) if entry.entry_id == self._selected_id), 0
         )
-        self.select_entry(self.entries[(index + offset) % len(self.entries)].entry_id)
+        count = len(self.entries)
+        target = min(max(index + offset, 0), count - 1) if clamp else (index + offset) % count
+        self.select_entry(self.entries[target].entry_id)
 
     def on_row_selected(self, event: RowSelected) -> None:
         if event.control.id != "library-list":
@@ -743,6 +1033,8 @@ class LibraryScreen(HubScreen):
     # Search
 
     def action_library_search(self) -> None:
+        if self.opened:
+            return
         search = self.query_one("#library-search", Input)
         search.display = True
         self.query_one("#library-search-button", HubButton).set_label("")
@@ -802,6 +1094,8 @@ class LibraryScreen(HubScreen):
         except Exception as exc:
             log_failure(log, logging.ERROR, "hub: session_playback_failed", exc, safe=True)
             self.app.notify(f"Could not play this session: {exc}", severity="error")
+        if app.is_running:
+            self._follow_playback()
 
     def _rediarize_refusal(self, entry: LibraryEntry) -> str | None:
         """Why Re-diarize cannot run on *entry*, once its detail is loaded."""
@@ -831,7 +1125,13 @@ class LibraryScreen(HubScreen):
             )
 
     async def _run_session_job(
-        self, label: str, operation: Callable[..., object], session_id: str, owner: str
+        self,
+        label: str,
+        operation: Callable[..., object],
+        session_id: str,
+        owner: str,
+        *,
+        notice: bool = True,
     ) -> object:
         app = self.app
         try:
@@ -845,9 +1145,11 @@ class LibraryScreen(HubScreen):
                 saved = getattr(app.services, "last_saved", None)
                 if saved is not None and saved.path.name == session_id:
                     app.services.last_saved = None
-            app.notify(f"{label} complete.")
+            if notice:
+                app.notify(f"{label} complete.")
         finally:
             app.release_session(session_id, owner)
+            self._session_work.pop(session_id, None)
             self._reload_detail()
             self.load_sessions()
             if app.is_running:
@@ -881,20 +1183,48 @@ class LibraryScreen(HubScreen):
         self._start_job("Rename", session_id, self.store.rename_label, *value)
 
     def _start_job(
-        self, label: str, session_id: str, operation: Callable[..., object], *args
+        self,
+        label: str,
+        session_id: str,
+        operation: Callable[..., object],
+        *args,
+        notice: bool = True,
     ) -> None:
         app = self.app
         owner = f"{label.lower()}-{next(self._owner_ids)}"
         if not app.try_acquire_session(session_id, owner):
             app.notify("session busy", severity="warning")
             return
+        self._session_work[session_id] = label.lower()
         app.run_worker(
             partial(
-                self._run_session_job, label, lambda sid: operation(sid, *args), session_id, owner
+                self._run_session_job,
+                label,
+                lambda sid: operation(sid, *args),
+                session_id,
+                owner,
+                notice=notice,
             ),
             group="library-session-job",
         )
         app.refresh_view()
+
+    def action_session_title(self) -> None:
+        app = self.app
+        entry = self._selected_session()
+        if entry is None or self.store is None:
+            return
+        if app.is_busy(entry.entry_id):
+            app.notify("session busy", severity="warning")
+            return
+        app.push_screen(
+            TitleDialog(entry.summary.title or ""), partial(self._save_title, entry.entry_id)
+        )
+
+    def _save_title(self, session_id: str, title: str | None) -> None:
+        if title is None or self.store is None:
+            return
+        self._start_job("Title", session_id, self.store.set_title, title, notice=False)
 
     def action_session_export(self) -> None:
         entry = self._selected_session()
@@ -1012,22 +1342,3 @@ class LibraryScreen(HubScreen):
     @property
     def files_running(self) -> bool:
         return self.files_submitting > 0 or bool(getattr(self.app.services, "files_running", False))
-
-    # Formats
-
-    @staticmethod
-    def _format_size(size: int) -> str:
-        amount = float(size)
-        for unit in ("B", "KB", "MB", "GB"):
-            if amount < 1024 or unit == "GB":
-                return f"{amount:.1f} {unit}"
-            amount /= 1024
-
-    @staticmethod
-    def _resample(activity: tuple[float, ...]) -> tuple[float, ...]:
-        """Return at most ``_SPARK_CELLS`` values: the peak of each equal slice."""
-        count = min(_SPARK_CELLS, len(activity))
-        return tuple(
-            max(activity[index * len(activity) // count : (index + 1) * len(activity) // count])
-            for index in range(count)
-        )
