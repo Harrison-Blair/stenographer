@@ -17,12 +17,15 @@ from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.export_dialog import ExportDialog
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.services import HubServices
+from stenographer.cli.hub.session_titles import THREAD_NAME
 from stenographer.cli.hub.title_dialog import TitleDialog
 from stenographer.cli.hub.widgets.button import HubButton
+from stenographer.cli.hub.widgets.status_token import StatusToken
 from stenographer.lib.config.models import Config
 from stenographer.lib.files.models import FileJobProgress
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
+from stenographer.lib.refine.errors import RefineTransportError
 from stenographer.lib.sessions import SessionStore
 from tests.cli.hub.support import _screen_text, make_app
 from tests.cli.hub.test_library import (
@@ -146,6 +149,7 @@ async def test_up_and_down_scroll_the_open_transcript_and_select_in_the_table(tm
 ACTION_KEYS = {
     "p": lambda app, services, session: ("play", session) in services.actions,
     "e": lambda app, services, session: isinstance(app.screen, TitleDialog),
+    "g": lambda app, services, session: len(services.title_request.calls) == 1,
     "r": lambda app, services, session: isinstance(app.screen, RenameDialog),
     "d": lambda app, services, session: ("diarization", session) in services.actions,
     "t": lambda app, services, session: ("re-transcribe", session) in services.actions,
@@ -186,6 +190,7 @@ async def test_a_busy_session_dims_what_cannot_run_and_its_keys_show_the_notice(
         await _settle(pilot, app)
         dimmed = {
             "library-title-button",
+            "library-generate-button",
             "library-rename",
             "library-rediarize",
             "library-retranscribe",
@@ -194,7 +199,7 @@ async def test_a_busy_session_dims_what_cannot_run_and_its_keys_show_the_notice(
         for button_id in (*dimmed, "library-play", "library-export"):
             assert _button(app, button_id).disabled == (button_id in dimmed), button_id
             assert "busy" not in _button(app, button_id).label.plain
-        for key in ("e", "r", "d", "t", "delete"):
+        for key in ("e", "g", "r", "d", "t", "delete"):
             before = _notices(app).count("session busy")
             await pilot.press(key)
             await pilot.pause()
@@ -324,6 +329,239 @@ async def test_the_title_is_not_in_the_log(tmp_path, caplog):
         await pilot.pause(0.2)
     assert caplog.records, "the hub logged nothing, so the check proves nothing"
     assert "caterer" not in caplog.text.casefold()
+
+
+# Generated titles
+
+GENERATED = "Alpha bravo, delta echo"
+
+
+def _title_cell(app, session_id: str) -> str:
+    """Return the first line of the title cell of a session in the table."""
+    library = app.library_screen
+    when = library.entry(session_id).summary.started_at.astimezone()
+    heading = _screen_text(app).splitlines()[app.screen.query_one("#library-columns").region.y]
+    row = _line_of(app, f"{when:%d %b %H:%M}")
+    start = heading.index("title")
+    return row[start : start + 12]
+
+
+@pytest.mark.parametrize("opened", [False, True], ids=["table", "session"])
+async def test_g_shows_generating_then_stores_a_model_title(tmp_path, opened):
+    root, sessions = _library(tmp_path)
+    services = FakeServices(root)
+    services.title_request.reply = GENERATED
+    services.title_request.release.clear()
+    app = make_app(tmp_path, services)
+    session = sessions["relabeled"]
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _open(pilot, app, 4)
+        if opened:
+            await pilot.press("enter")
+            await _settle(pilot, app)
+        await pilot.press("g")
+        await _until(pilot, lambda: services.title_request.started.is_set())
+        await _settle(pilot, app)
+        if opened:
+            title = app.screen.query_one("#library-detail-title", Static)
+            assert title.render().plain == "generating…"
+            assert title.content.style == StatusToken.TONES["dim"]
+            assert _button(app, "library-title-button").disabled
+            assert _button(app, "library-generate-button").disabled
+        else:
+            assert _title_cell(app, session) == "generating… "
+            table = app.screen.query_one("#library-list").content
+            start = table.plain.index("generating…")
+            assert any(
+                span.start <= start < span.end and span.style == StatusToken.TONES["dim"]
+                for span in table.spans
+            )
+        [(_host, _model, text, _keep_alive)] = services.title_request.calls
+        assert text == "Speaker 1: alpha bravo charlie\nYou: delta echo foxtrot"
+
+        services.title_request.release.set()
+        await _until(pilot, lambda: GENERATED in _screen_text(app), "no title")
+        summary = SessionStore(root).read(session).summary
+        assert (summary.title, summary.title_source) == (GENERATED, "model")
+        assert "generating…" not in _screen_text(app)
+
+
+async def test_e_and_g_show_session_busy_while_the_title_generates_and_other_keys_act(tmp_path):
+    root, sessions = _library(tmp_path)
+    services = FakeServices(root)
+    services.title_request.release.clear()
+    app = make_app(tmp_path, services)
+    session = sessions["relabeled"]
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _open(pilot, app, 4)
+        await pilot.press("g")
+        await _until(pilot, lambda: services.title_request.started.is_set())
+        for key in ("e", "g"):
+            before = _notices(app).count("session busy")
+            await pilot.press(key)
+            await pilot.pause()
+            assert _notices(app).count("session busy") == before + 1, key
+            assert app.screen is app.library_screen, key
+        await pilot.press("p")
+        await _until(pilot, lambda: ("play", session) in services.actions, "p did nothing")
+        await pilot.press("r")
+        await _until(pilot, lambda: isinstance(app.screen, RenameDialog), "r did nothing")
+        services.title_request.release.set()
+    assert len(services.title_request.calls) == 1
+
+
+async def test_g_on_a_typed_title_asks_first(tmp_path):
+    root, sessions = _library(tmp_path)
+    session = sessions["relabeled"]
+    SessionStore(root).set_title(session, TITLE)
+    services = FakeServices(root)
+    services.title_request.reply = GENERATED
+    app = make_app(tmp_path, services)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _open(pilot, app, 4)
+        await pilot.press("g")
+        await _until(pilot, lambda: isinstance(app.screen, QuitConfirm))
+        assert "Replace the title you typed with a generated title?" in _screen_text(app)
+        await pilot.press("n")
+        await _until(pilot, lambda: app.screen is app.library_screen)
+        await pilot.pause(0.2)
+        assert services.title_request.calls == []
+
+        await pilot.press("g")
+        await _until(pilot, lambda: isinstance(app.screen, QuitConfirm))
+        await pilot.press("y")
+        await _until(pilot, lambda: GENERATED in _screen_text(app), "no title")
+    summary = SessionStore(root).read(session).summary
+    assert (summary.title, summary.title_source) == (GENERATED, "model")
+
+
+async def test_g_on_a_model_title_asks_nothing(tmp_path):
+    root, sessions = _library(tmp_path)
+    session = sessions["relabeled"]
+    SessionStore(root).set_title(session, TITLE, source="model")
+    services = FakeServices(root)
+    services.title_request.reply = GENERATED
+    app = make_app(tmp_path, services)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _open(pilot, app, 4)
+        await pilot.press("g")
+        await _until(pilot, lambda: GENERATED in _screen_text(app), "no title")
+        assert not isinstance(app.screen, QuitConfirm)
+
+
+async def test_a_session_deleted_while_its_title_generates_drops_the_title(tmp_path):
+    root, sessions = _library(tmp_path)
+    services = FakeServices(root)
+    services.release_job.set()
+    services.title_request.release.clear()
+    app = make_app(tmp_path, services)
+    session = sessions["relabeled"]
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _open(pilot, app, 4)
+        await pilot.press("g")
+        await _until(pilot, lambda: services.title_request.started.is_set())
+        await pilot.press("delete")
+        await _until(pilot, lambda: isinstance(app.screen, QuitConfirm))
+        await pilot.press("y")
+        await _until(pilot, lambda: not (root / session).exists(), "not deleted")
+        services.title_request.release.set()
+        await _until(pilot, lambda: not services.titles.generating, "still generating")
+        await _until(pilot, lambda: len(app.library_screen.entries) == 3)
+        await _settle(pilot, app)
+        assert not (root / session).exists()
+        assert _notices(app) == ["Delete complete."]
+
+
+async def test_a_failure_of_g_shows_a_notice(tmp_path):
+    root, _sessions = _library(tmp_path)
+    services = FakeServices(root)
+    services.title_request.reply = RefineTransportError("ollama could not be reached")
+    app = make_app(tmp_path, services)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _open(pilot, app, 4)
+        await pilot.press("g")
+        notice = "Could not generate a title: ollama could not be reached."
+        await _until(pilot, lambda: notice in _notices(app), "no notice")
+
+
+async def test_a_session_without_transcript_lines_gets_no_request_and_a_notice(tmp_path):
+    root = tmp_path / "sessions"
+    writer = SessionWriter.open(tmp_path, REC_LIVE)
+    writer.close()
+    services = FakeServices(root)
+    app = make_app(tmp_path, services)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _open(pilot, app, 1)
+        await pilot.press("g")
+        notice = "This session has no transcript lines."
+        await _until(pilot, lambda: notice in _notices(app), "no notice")
+    assert services.title_request.calls == []
+
+
+async def test_a_title_stored_between_two_polls_shows_at_the_next_poll(tmp_path):
+    root, sessions = _library(tmp_path)
+    services = FakeServices(root)
+    services.title_request.reply = "Kilo lima"
+    services.installed_models.add(services.config.refine.model)
+    app = make_app(tmp_path, services)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _open(pilot, app, 4)
+        # The event loop does not run while the request starts and ends.
+        services.titles.generate_auto(sessions["relabeled"])
+        for thread in threading.enumerate():
+            if thread.name == THREAD_NAME:
+                thread.join(timeout=5)
+        assert SessionStore(root).read(sessions["relabeled"]).summary.title == "Kilo lima"
+        await _until(pilot, lambda: "Kilo lima" in _screen_text(app), "the title does not show")
+
+
+async def test_a_g_that_fails_between_two_polls_clears_generating_at_the_next_poll(tmp_path):
+    root, _sessions = _library(tmp_path)
+    services = FakeServices(root)
+    services.title_request.reply = RefineTransportError("ollama could not be reached")
+    app = make_app(tmp_path, services)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _open(pilot, app, 4)
+        await pilot.press("enter")
+        await _settle(pilot, app)
+        # One idle poll runs before g.
+        await pilot.pause(0.15)
+        # The event loop does not run while g starts, fails, and its thread ends.
+        app.library_screen.action_session_generate_title()
+        for thread in threading.enumerate():
+            if thread.name == THREAD_NAME:
+                thread.join(timeout=5)
+        assert not services.titles.generating
+        # Shorter than the one-second engine refresh: only the poll draws.
+        notice = "Could not generate a title: ollama could not be reached."
+        await _until(pilot, lambda: notice in _notices(app), "no notice")
+        await pilot.pause(0.15)
+        title = app.screen.query_one("#library-detail-title", Static)
+        assert title.content.plain != "generating…"
+        assert not _button(app, "library-title-button").disabled
+        assert not _button(app, "library-generate-button").disabled
+
+
+async def test_a_finished_file_job_gets_an_automatic_title(tmp_path):
+    root, _sessions = _library(tmp_path)
+    services = FakeServices(root)
+    services.title_request.reply = GENERATED
+    services.installed_models.add(services.config.refine.model)
+    job = FakeJob("file-1", tmp_path / "sources" / "meeting.wav")
+    services.jobs.append(job)
+    app = make_app(tmp_path, services)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await pilot.press("2")
+        await _until(pilot, lambda: len(app.library_screen.entries) == 5, "list did not load")
+        # The poll must see the job run before it ends.
+        await _until(pilot, lambda: app.library_screen._job_states.get("file-1") == "running")
+        new_id = _write_file_session(root, tmp_path, name="meeting.wav")
+        job.session_id = new_id
+        job.state = "completed"
+        store = SessionStore(root)
+        await _until(pilot, lambda: store.read(new_id).summary.title, "no automatic title")
+    summary = SessionStore(root).read(new_id).summary
+    assert (summary.title, summary.title_source) == (GENERATED, "model")
 
 
 # Play

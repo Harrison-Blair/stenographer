@@ -104,7 +104,7 @@ semantic fidelity.
 
 ## Privacy
 
-The transcript leaves the process once: as the body of a single
+A dictated transcript leaves the process once: as the body of a single
 `POST {host}/api/chat` to the host you configured. With the default host,
 `http://127.0.0.1:11434`, that is a loopback request and the text never leaves
 your machine. Loopback refine requests bypass environment proxies; requests to
@@ -114,6 +114,14 @@ If you point `host` at anything else, your transcripts are sent over the
 network to that machine. Nothing stops you — it is your configuration — but the
 config file says so, the setup wizard says so, and the daemon logs a warning at
 every start.
+
+The [hub](hub.md#titles) uses the same host and model for session titles. When
+refine is on, it sends the transcript of each saved recording and finished file
+job, or three samples of about 600 words from a long one, in one more
+`POST {host}/api/chat`; `g` in the Library does the same for one session. The
+title request sets `think` false, temperature 0, a small reply limit, and the
+refine `keep_alive`, and no context size, so it does not make Ollama load the
+model again. The title is stored only in the session folder.
 
 Nothing else changes. Transcript text still never appears in a log line, an
 error message, a notification, or your local statistics. The refine stage adds

@@ -137,6 +137,7 @@ def test_hub_services_do_not_create_a_session_until_recording_starts(tmp_path):
     class Session:
         def __init__(self, config, **_kwargs):
             self.config = config
+            self.path = tmp_path / f"session-{len(created)}"
             self.started = False
             self.stopped = False
             created.append(self)
@@ -149,8 +150,14 @@ def test_hub_services_do_not_create_a_session_until_recording_starts(tmp_path):
             self.stopped = True
 
     platform = SimpleNamespace(data_dir=lambda *_args: tmp_path)
-    initial_config = SimpleNamespace(asr=object(), live=SimpleNamespace(diarize_mic=False))
-    next_config = SimpleNamespace(asr=object(), live=SimpleNamespace(diarize_mic=False))
+    # Refine off: a saved session then asks for no title.
+    refine = SimpleNamespace(enabled=False)
+    initial_config = SimpleNamespace(
+        asr=object(), live=SimpleNamespace(diarize_mic=False), refine=refine
+    )
+    next_config = SimpleNamespace(
+        asr=object(), live=SimpleNamespace(diarize_mic=False), refine=refine
+    )
     services = HubServices(initial_config, platform, session_factory=Session)
 
     assert not services.recording
@@ -204,6 +211,7 @@ def test_hub_services_start_sessions_with_the_configured_mic_diarization(tmp_pat
     class Session:
         def __init__(self, _config, **kwargs):
             choices.append(kwargs["diarize_mic"])
+            self.path = tmp_path / f"session-{len(choices)}"
 
         def start(self):
             pass

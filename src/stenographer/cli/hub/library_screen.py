@@ -24,7 +24,7 @@ from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.doctor_view import DOCTOR_STATE_GLYPHS
 from stenographer.cli.hub.export_dialog import ExportDialog
 from stenographer.cli.hub.hub_screen import HubScreen
-from stenographer.cli.hub.library_table import LibraryTable, TableRow
+from stenographer.cli.hub.library_table import GENERATING, LibraryTable, TableRow
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.title_dialog import TitleDialog
 from stenographer.cli.hub.transcribe_dialog import TranscribeDialog
@@ -133,6 +133,7 @@ class LibraryScreen(HubScreen):
         ("slash", "library_search", "Search titles and transcripts"),
         ("p", "session_playback", "Play or stop the session"),
         ("e", "session_title", "Edit the title"),
+        ("g", "session_generate_title", "Generate a title"),
         ("r", "session_rename", "Rename a speaker"),
         ("d", "session_rediarize", "Re-diarize the session"),
         ("t", "session_retranscribe", "Re-transcribe the session"),
@@ -200,6 +201,9 @@ class LibraryScreen(HubScreen):
         self._job_states: dict[str, str] = {}
         self._job_owners: dict[str, tuple[str, str]] = {}
         self._session_work: dict[str, str] = {}
+        # The sessions whose title the model works on, as the last poll read them.
+        self._generating: frozenset[str] = frozenset()
+        self._titles_stored = 0
         self._removed_jobs: set[str] = set()
         self._owner_ids = itertools.count(1)
         self._pending_select: str | None = None
@@ -255,6 +259,13 @@ class LibraryScreen(HubScreen):
                     tight=True,
                     id="library-title-button",
                 )
+                yield HubButton(
+                    "Generate title",
+                    key="g",
+                    action="session_generate_title",
+                    tight=True,
+                    id="library-generate-button",
+                )
             yield SpeakerBar(id="library-speakers")
             with Grid(id="library-actions"):
                 for button_id, key, label, action, tone in _ACTIONS:
@@ -270,6 +281,7 @@ class LibraryScreen(HubScreen):
         search.display = False
         # Inline: the app rules of HubButton outrank screen CSS.
         self.query_one("#library-title-button", HubButton).styles.margin = (0, 0, 0, 2)
+        self.query_one("#library-generate-button", HubButton).styles.margin = (0, 0, 0, 2)
         self.query_one("#library-list-hints", KeyHints).set_hints(
             ("↑↓", "select"), ("enter", "open"), ("PgUp/Dn", "page")
         )
@@ -285,6 +297,7 @@ class LibraryScreen(HubScreen):
                 ("esc", "back"),
                 ("p", "play"),
                 ("e", "title"),
+                ("g", "generate"),
                 ("r", "rename"),
                 ("d", "re-diarize"),
                 ("t", "re-transcribe"),
@@ -299,6 +312,7 @@ class LibraryScreen(HubScreen):
             ("/", "search"),
             ("p", "play"),
             ("e", "title"),
+            ("g", "generate"),
             ("r", "rename"),
             ("d", "re-diarize"),
             ("t", "re-transcribe"),
@@ -475,6 +489,9 @@ class LibraryScreen(HubScreen):
             return summary.title
         return summary.source_name if summary.kind == "file" else None
 
+    def _is_generating(self, entry: LibraryEntry) -> bool:
+        return entry.session_id is not None and entry.session_id in self._generating
+
     def _table_row(self, entry: LibraryEntry) -> TableRow:
         summary = entry.summary
         size = (
@@ -491,6 +508,7 @@ class LibraryScreen(HubScreen):
             size=size,
             state=self._state_word(entry),
             glyph=self._state_glyph(entry),
+            generating=self._is_generating(entry),
         )
 
     def _state_word(self, entry: LibraryEntry) -> Text:
@@ -533,10 +551,11 @@ class LibraryScreen(HubScreen):
         detail = self.detail if entry.summary is not None else None
         update_changed(self.query_one("#library-session-meta", Static), self._session_meta(entry))
         title = self._title(entry)
-        update_changed(
-            self.query_one("#library-detail-title", Static),
-            Text(title) if title is not None else Text("—", style=_DIM),
-        )
+        if self._is_generating(entry):
+            title_text = Text(GENERATING, style=_DIM)
+        else:
+            title_text = Text(title) if title is not None else Text("—", style=_DIM)
+        update_changed(self.query_one("#library-detail-title", Static), title_text)
         speakers = self.query_one("#library-speakers", SpeakerBar)
         items = self._speaker_items(detail) if detail is not None else ()
         speakers.set_items(items, speakers=len(items), max_rows=self._speaker_rows_allowed())
@@ -622,6 +641,7 @@ class LibraryScreen(HubScreen):
         busy = session_id is not None and self.app.is_busy(session_id)
         none = session_id is None
         loaded = not none and self._detail_id == session_id and self.detail is not None
+        titling = busy or self._is_generating(entry)
         rediarize_off = none or entry.kind == "file" or self._rediarize_refusal(entry) is not None
         if entry.job_active:
             delete = ("Cancel job…", False)
@@ -638,14 +658,17 @@ class LibraryScreen(HubScreen):
             "library-delete": delete,
             "library-title-button": (
                 "Title…" if self.tier == "narrow" else "Edit title…",
-                none or busy,
+                none or titling,
             ),
+            "library-generate-button": ("Generate title", none or titling),
         }
         for button_id, (label, disabled) in states.items():
             button = self.query_one(f"#{button_id}", HubButton)
             if button.label.plain != HubButton.label_text(label, button.key).plain:
                 button.set_label(label)
             button.disabled = disabled
+        # The narrow tier has no room for it on the title row; ``g`` still acts.
+        self.query_one("#library-generate-button").display = self.tier != "narrow"
         self._fit_actions()
 
     def _fit_actions(self) -> None:
@@ -889,8 +912,9 @@ class LibraryScreen(HubScreen):
     # Jobs
 
     def poll_jobs(self) -> None:
-        """Follow file jobs: release their sessions, keep rows current, reload on an end."""
-        reload = False
+        """Follow file jobs and titles: release sessions, keep rows current, reload on an end."""
+        # Without a session store there is no session to title.
+        reload = self.store is not None and self._follow_titles()
         for job in self._jobs():
             state = job.state
             if job.id not in self._job_targets:
@@ -922,6 +946,7 @@ class LibraryScreen(HubScreen):
             entry = self.selected_entry
             key = (
                 tuple((job.id, job.state, job.progress) for job in self._jobs()),
+                self._generating,
                 entry is not None
                 and entry.session_id is not None
                 and self.app.is_busy(entry.session_id),
@@ -940,6 +965,7 @@ class LibraryScreen(HubScreen):
             if self._selected_id == f"job:{job.id}":
                 # Select the session when a reload lists it.
                 self._follow_select = job.session_id
+            self.app.services.titles.generate_auto(job.session_id)
             if target is not None and target[0] == self._detail_id:
                 self._detail_id = None
             log.info(fmt_event("hub", "library_job_saved", job_id=job.id))
@@ -1210,7 +1236,7 @@ class LibraryScreen(HubScreen):
         entry = self._selected_session()
         if entry is None or self.store is None:
             return
-        if app.is_busy(entry.entry_id):
+        if self._title_busy(entry.entry_id):
             app.notify("session busy", severity="warning")
             return
         app.push_screen(
@@ -1221,6 +1247,58 @@ class LibraryScreen(HubScreen):
         if title is None or self.store is None:
             return
         self._start_job("Title", session_id, self.store.set_title, title, notice=False)
+
+    def _title_busy(self, session_id: str) -> bool:
+        """Whether a job holds the session or the model works on its title."""
+        return self.app.is_busy(session_id) or session_id in self.app.services.titles.generating
+
+    def action_session_generate_title(self) -> None:
+        app = self.app
+        entry = self._selected_session()
+        if entry is None or self.store is None:
+            return
+        if self._title_busy(entry.entry_id):
+            app.notify("session busy", severity="warning")
+            return
+        summary = entry.summary
+        if summary.title is not None and summary.title_source != "model":
+            app.push_screen(
+                QuitConfirm(
+                    "Replace the title you typed with a generated title?",
+                    confirm="Generate",
+                    cancel="Keep",
+                ),
+                partial(self._generate_title, entry.entry_id, summary.title),
+            )
+        else:
+            self._generate_title(entry.entry_id, None, True)
+
+    def _generate_title(self, session_id: str, replace: str | None, confirmed: bool | None) -> None:
+        """Queue ``g``; ``replace`` is the typed title that the user agreed to replace."""
+        if not confirmed:
+            return
+        app = self.app
+        titles = app.services.titles
+        if app.is_busy(session_id) or not titles.generate(session_id, replace=replace):
+            app.notify("session busy", severity="warning")
+            return
+        self._generating = titles.generating
+        # This draw is not the poll's: the next poll draws again, also when the request
+        # has ended before it and stored nothing.
+        self._poll_key = None
+        app.refresh_view()
+
+    def _follow_titles(self) -> bool:
+        """Show the notices of ``g`` and the new generating set; true when a title was stored."""
+        titles = self.app.services.titles
+        for message, severity in titles.take_notices():
+            self.app.notify(message, severity=severity)
+        self._generating = titles.generating
+        # A count, not the generating set: a title stored between two polls still counts.
+        stored = titles.stored
+        changed = stored != self._titles_stored
+        self._titles_stored = stored
+        return changed
 
     def action_session_export(self) -> None:
         entry = self._selected_session()

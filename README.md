@@ -195,7 +195,7 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   file jobs; `enter` opens the selected entry on the full screen and `escape`
   returns. Press `/` to search titles, session IDs, times (including displayed
   recording dates), file names, and transcripts, `p` to play, `e` to edit the
-  title, `d` or `t` to re-diarize or re-transcribe, `x` to export, and `delete`
+  title, `g` to generate a title with the refine model, `d` or `t` to re-diarize or re-transcribe, `x` to export, and `delete`
   to delete or cancel a job; confirm with `y` or cancel with `n`. Press `n` there to transcribe a file: the dialog browses from your
   home folder, including hidden folders; search with a leading dot to find hidden audio. Folder read errors show their reason. The dialog sets Separate speakers and Refine text, and
   queues one job that shows in the list at once. Help and quit appear first in the footer. Long Settings values are cut with `…`. Settings has two tabs: one page of
@@ -252,7 +252,9 @@ transcript. General retains its original length and numeral checks.
 General keeps the original filler and self-correction cleanup behavior
 (`gemma4:e2b` by default) on `127.0.0.1`, so the text still never leaves your
 machine. Turn it off or point it elsewhere in `[stenographer.refine]`; a
-non-loopback host sends transcripts there over the network. Loopback refine
+non-loopback host sends transcripts there over the network. The hub also sends
+saved transcripts, or samples of long ones, to the refine host for session
+titles while refine is on. Loopback refine
 requests bypass environment proxies. While a model
 loads, the lifecycle pill's border breathes: in the amber Loading colour for
 the speech model and in the Refining colour for the cleanup model, taking

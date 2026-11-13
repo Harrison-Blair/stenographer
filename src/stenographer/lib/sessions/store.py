@@ -221,13 +221,30 @@ class SessionStore:
             raise ValueError(f"session metadata is not an object: {metadata_path}")
         return metadata
 
-    def set_title(self, session_id: str, title: str, *, source: str = "user") -> None:
-        """Store the title and its source (``model`` or ``user``); a blank title removes both."""
+    def set_title(
+        self,
+        session_id: str,
+        title: str,
+        *,
+        source: str = "user",
+        only_if: Callable[[str | None, str | None], bool] | None = None,
+    ) -> bool:
+        """Store the title and its source (``model`` or ``user``); a blank title removes both.
+
+        ``only_if`` gets the stored title and source, read under the session lock; when it
+        returns false, nothing is written. Return whether the title was written.
+        """
         if source not in {"model", "user"}:
             raise ValueError(f"unknown title source: {source}")
-        directory = self._directory(session_id)
         with _session_lock(self.root / session_id):
+            # Inside the lock: a session deleted before the write raises SessionNotFoundError.
+            directory = self._directory(session_id)
             metadata = self._metadata_to_write(directory)
+            if only_if is not None:
+                current = session_title(metadata)
+                stored_source = metadata.get("title_source") if current is not None else None
+                if not only_if(current, stored_source):
+                    return False
             # A session without session.json reads its first transcript; keep that.
             metadata.setdefault("current_revision", "transcript.jsonl")
             cleaned = " ".join(title.split())
@@ -238,6 +255,7 @@ class SessionStore:
                 metadata.pop("title", None)
                 metadata.pop("title_source", None)
             write_session_json(directory, metadata)
+        return True
 
     def next_revision_name(self, session_id: str) -> str:
         """Return the file name that the next revision of this session gets."""
