@@ -2,10 +2,12 @@
 """Integration smoke suite for the PTT hotkey listener.
 
 Real, non-mocked input path: a genuine evdev.UInput keyboard advertising
-KEY_A..KEY_Z plus the binding key, an EvdevHotkeyListener pointed at that device's
-read-back node, and the binding key emitted down then up. Nothing is mocked —
-the kernel virtual input device is the actual resource the listener reads, and
-the callbacks are driven by real EV_KEY events round-tripping through it.
+KEY_A..KEY_Z plus the binding key, an EvdevHotkeyListener whose keyboard
+detection is narrowed to that device's read-back node, and the binding key
+emitted down then up. Only the detection list is replaced (so the listener does
+not also read the machine's real keyboards) — the kernel virtual input device is
+the actual resource the listener reads, and the callbacks are driven by real
+EV_KEY events round-tripping through it.
 
 Collected only with STENOGRAPHER_INTEGRATION=1, and skipped further unless
 /dev/uinput is writable and the created node is readable back, so the default
@@ -21,6 +23,7 @@ import evdev
 import pytest
 
 from stenographer.lib.hotkey.binding import parse_binding
+from stenographer.lib.platform.linux import hotkey as hotkey_module
 from stenographer.lib.platform.linux.evdev_key_table import EvdevKeyTable
 from stenographer.lib.platform.linux.hotkey import EvdevHotkeyListener
 
@@ -37,7 +40,7 @@ def _open_uinput() -> evdev.UInput:
         pytest.skip(f"/dev/uinput not usable: {exc}")
 
 
-def test_uinput_loopback_drives_start_then_stop():
+def test_uinput_loopback_drives_start_then_stop(monkeypatch):
     ui = _open_uinput()
     node = ui.device.path
     try:
@@ -46,11 +49,11 @@ def test_uinput_loopback_drives_start_then_stop():
     except OSError as exc:
         ui.close()
         pytest.skip(f"uinput node {node} not readable: {exc}")
+    monkeypatch.setattr(hotkey_module, "auto_detect_paths", lambda: [node])
 
     starts: list[int] = []
     stops: list[int] = []
     listener = EvdevHotkeyListener(
-        device_path=node,
         lock=threading.RLock(),
         bindings={"default": parse_binding("KEY_RIGHTALT", EvdevKeyTable())},
         on_binding_start=lambda _name: starts.append(1),
@@ -73,7 +76,7 @@ def test_uinput_loopback_drives_start_then_stop():
     assert stops == [1], "falling edge must fire on_stop exactly once"
 
 
-def test_destroying_held_uinput_drives_one_stop_and_releases_guard():
+def test_destroying_held_uinput_drives_one_stop_and_releases_guard(monkeypatch):
     """A disappearing HID must contribute a final falling edge.
 
     Regression guard: there is deliberately no key-up. Closing the real uinput
@@ -87,6 +90,7 @@ def test_destroying_held_uinput_drives_one_stop_and_releases_guard():
     except OSError as exc:
         ui.close()
         pytest.skip(f"uinput node {node} not readable: {exc}")
+    monkeypatch.setattr(hotkey_module, "auto_detect_paths", lambda: [node])
 
     starts: list[int] = []
     stops: list[int] = []
@@ -102,7 +106,6 @@ def test_destroying_held_uinput_drives_one_stop_and_releases_guard():
         stopped.set()
 
     listener = EvdevHotkeyListener(
-        device_path=node,
         lock=threading.RLock(),
         bindings={"default": parse_binding("KEY_RIGHTALT", EvdevKeyTable())},
         on_binding_start=on_start,

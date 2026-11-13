@@ -74,7 +74,6 @@ class LinuxPlatform(DiagnosticsHostMixin):
     def hotkey_listener(
         self,
         *,
-        device: str | None,
         lock: threading.RLock,
         bindings: dict[str, frozenset[int]],
         on_binding_start: Callable[[str], None],
@@ -85,7 +84,6 @@ class LinuxPlatform(DiagnosticsHostMixin):
         from stenographer.lib.platform.linux.hotkey import EvdevHotkeyListener
 
         return EvdevHotkeyListener(
-            device_path=device,
             lock=lock,
             bindings=bindings,
             on_binding_start=on_binding_start,

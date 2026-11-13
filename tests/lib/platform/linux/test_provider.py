@@ -36,7 +36,6 @@ def test_provider_speaks_the_evdev_key_vocabulary():
 
 def test_provider_builds_an_evdev_listener_without_touching_a_device():
     listener = LinuxPlatform().hotkey_listener(
-        device="/dev/input/event9",
         lock=threading.RLock(),
         bindings={"default": frozenset({97})},
         on_binding_start=lambda _name: None,
@@ -44,9 +43,8 @@ def test_provider_builds_an_evdev_listener_without_touching_a_device():
         cancel=frozenset({1}),
     )
     assert isinstance(listener, EvdevHotkeyListener)
-    # Construction is inert: the device is opened by start(), not here.
+    # Construction is inert: devices are detected and opened by start(), not here.
     assert listener.is_running is False
-    assert listener._resolve_paths() == ["/dev/input/event9"]
 
 
 def test_provider_reports_an_unopenable_capture_device_in_setup_vocabulary():

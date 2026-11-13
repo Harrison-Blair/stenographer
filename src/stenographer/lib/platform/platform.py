@@ -56,7 +56,6 @@ class Platform(Protocol):
     def hotkey_listener(
         self,
         *,
-        device: str | None,
         lock: threading.RLock,
         bindings: dict[str, frozenset[int]],
         on_binding_start: Callable[[str], None],

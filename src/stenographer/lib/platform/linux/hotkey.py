@@ -78,15 +78,13 @@ def auto_detect_paths() -> list[str]:
 
 
 class EvdevHotkeyListener(ChordTracker):
-    """Evdev edge reporter: listens on the configured device or every
-    auto-detected keyboard, unioning held keys across HIDs. The device is never
-    grabbed: non-chord keys pass through.
+    """Evdev edge reporter: listens on every auto-detected keyboard, unioning
+    held keys across HIDs. No device is grabbed: non-chord keys pass through.
     """
 
     def __init__(
         self,
         *,
-        device_path: str | None,
         lock: threading.RLock,
         bindings: dict[str, frozenset[int]],
         on_binding_start: Callable[[str], None],
@@ -102,7 +100,6 @@ class EvdevHotkeyListener(ChordTracker):
             cancel=cancel,
             on_cancel=on_cancel,
         )
-        self._device_path = device_path
         self._supervisor: threading.Thread | None = None
         self._readers: list[threading.Thread] = []
         self._devices: list[evdev.InputDevice] = []
@@ -138,11 +135,8 @@ class EvdevHotkeyListener(ChordTracker):
     def is_running(self) -> bool:
         return self._supervisor is not None and self._supervisor.is_alive()
 
-    def _resolve_paths(self) -> list[str]:
-        return [self._device_path] if self._device_path else auto_detect_paths()
-
     def _run(self) -> None:
-        paths = self._resolve_paths()
+        paths = auto_detect_paths()
         while not self._stop_event.is_set():
             devices: list[evdev.InputDevice] = []
             for path in paths:
@@ -166,11 +160,11 @@ class EvdevHotkeyListener(ChordTracker):
                     return
                 logger.warning("hotkey: devices_lost action=redetect")
             else:
-                # No target device is currently openable (unplugged, stale
-                # explicit path, or a permissions gap). Back off before retrying
-                # so an outage cannot busy-loop the daemon: with an explicit
-                # hotkey.device, _resolve_paths always yields that path, so
-                # _reacquire returns instantly and never blocks.
+                # No detected keyboard could be opened (for example, it was
+                # unplugged between detection and open). Back off before
+                # retrying so an outage cannot busy-loop the daemon: while
+                # auto_detect_paths still lists the path, _reacquire returns
+                # instantly and never blocks.
                 logger.debug(
                     "hotkey: no_openable_device retry_seconds=%s",
                     _REACQUIRE_INTERVAL_SECONDS,
@@ -183,7 +177,7 @@ class EvdevHotkeyListener(ChordTracker):
 
     def _reacquire(self) -> list[str]:
         while not self._stop_event.is_set():
-            paths = self._resolve_paths()
+            paths = auto_detect_paths()
             if paths:
                 return paths
             self._stop_event.wait(_REACQUIRE_INTERVAL_SECONDS)
@@ -191,7 +185,7 @@ class EvdevHotkeyListener(ChordTracker):
 
     def _supervise(self) -> None:
         """Wait until every reader dies or stop is requested; while at least one
-        reader lives, periodically rescan (auto-detect mode only) to pick up a
+        reader lives, periodically rescan to pick up a
         hotplugged keyboard without disturbing an in-flight press.
         """
         next_rescan = time.monotonic() + _RESCAN_INTERVAL_SECONDS
@@ -200,7 +194,7 @@ class EvdevHotkeyListener(ChordTracker):
             self._readers = [t for t in self._readers if t.is_alive()]
             if not self._readers:
                 return
-            if self._device_path is None and time.monotonic() >= next_rescan:
+            if time.monotonic() >= next_rescan:
                 self._rescan()
                 next_rescan = time.monotonic() + _RESCAN_INTERVAL_SECONDS
 

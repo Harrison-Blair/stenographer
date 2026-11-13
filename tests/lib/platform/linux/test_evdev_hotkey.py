@@ -65,17 +65,28 @@ class FakeDevice:
         self.closed = True
 
 
-def _listener(device_path=None):
+def _listener():
     """A listener whose edges are recorded, wired to no device at all."""
     edges: list[str] = []
     listener = EvdevHotkeyListener(
-        device_path=device_path,
         lock=threading.RLock(),
         bindings={"default": frozenset({_CHORD_KEY})},
         on_binding_start=lambda _name: edges.append("start"),
         on_binding_stop=lambda _name: edges.append("stop"),
     )
     return listener, edges
+
+
+def _detect(monkeypatch, *paths):
+    """Make keyboard detection report exactly *paths*; returns the call times."""
+    calls: list[float] = []
+
+    def detect():
+        calls.append(time.monotonic())
+        return list(paths)
+
+    monkeypatch.setattr(hotkey_module, "auto_detect_paths", detect)
+    return calls
 
 
 def _register(listener, *devices):
@@ -119,41 +130,33 @@ def test_too_few_letter_keys_is_rejected():
     assert is_main_keyboard("Volume Dial", [_KEY_A, _KEY_A + 1, _KEY_A + 2]) is False
 
 
-def test_unopenable_explicit_device_backs_off_instead_of_spinning():
-    """An explicit hotkey.device that cannot be opened (unplugged, stale path, or
-    a permissions gap) must back off between retries, not busy-loop the CPU.
+def test_detected_device_that_cannot_be_opened_backs_off_instead_of_spinning(monkeypatch):
+    """A detected keyboard that cannot be opened (unplugged between detection
+    and open) must back off between retries, not busy-loop the CPU.
 
-    Regression guard: _resolve_paths returns the explicit path unconditionally,
-    so the acquisition loop must sleep on a failed open rather than re-detecting
-    instantly. A nonexistent path makes evdev.InputDevice raise a real OSError —
-    no device is ever created, so this stays a control-flow test. The retry rate
-    is observed by counting _resolve_paths calls; the busy-loop bug does
-    thousands in 0.3s, the backoff does a handful.
+    Regression guard: while detection keeps listing the path, _reacquire returns
+    it at once, so the acquisition loop must sleep on a failed open rather than
+    re-detecting instantly. A nonexistent path makes evdev.InputDevice raise a
+    real OSError — no device is ever created, so this stays a control-flow test.
+    The retry rate is observed by counting detection calls; the busy-loop bug
+    does thousands in 0.3s, the backoff does a handful.
 
     Seen to FAIL against the pre-fix listener (count in the thousands).
     """
+    calls = _detect(monkeypatch, "/dev/input/stenographer-nonexistent")
     listener = EvdevHotkeyListener(
-        device_path="/dev/input/stenographer-nonexistent",
         lock=threading.RLock(),
         bindings={"default": parse_binding("KEY_RIGHTALT", EvdevKeyTable())},
         on_binding_start=lambda _name: None,
         on_binding_stop=lambda _name: None,
     )
-    calls = {"n": 0}
-    real_resolve = listener._resolve_paths
-
-    def counting_resolve():
-        calls["n"] += 1
-        return real_resolve()
-
-    listener._resolve_paths = counting_resolve
     listener.start()
     try:
         time.sleep(0.3)
     finally:
         listener.stop()
 
-    assert calls["n"] < 20, f"listener spun {calls['n']} times in 0.3s (expected backoff)"
+    assert len(calls) < 20, f"listener spun {len(calls)} times in 0.3s (expected backoff)"
 
 
 def test_the_device_enumeration_seam_lists_paths_without_opening_any():
@@ -188,13 +191,14 @@ def test_auto_detect_skips_event_nodes_it_cannot_open(monkeypatch, caplog):
     }
 
 
-def test_start_is_idempotent_and_the_listener_restarts_after_stop():
+def test_start_is_idempotent_and_the_listener_restarts_after_stop(monkeypatch):
     """A second start() must not raise a second supervisor thread.
 
-    The configured device does not exist, so the acquisition loop only ever
+    The detected device does not exist, so the acquisition loop only ever
     backs off — nothing is opened — while start/stop/is_running are exercised.
     """
-    listener, _ = _listener("/dev/input/stenographer-nonexistent")
+    _detect(monkeypatch, "/dev/input/stenographer-nonexistent")
+    listener, _ = _listener()
     listener.start()
     try:
         supervisor = listener._supervisor
@@ -214,8 +218,9 @@ def test_start_is_idempotent_and_the_listener_restarts_after_stop():
         listener.stop()
 
 
-def test_reacquire_returns_immediately_and_gives_up_once_stop_is_requested():
-    listener, _ = _listener("/dev/input/event9")
+def test_reacquire_returns_immediately_and_gives_up_once_stop_is_requested(monkeypatch):
+    _detect(monkeypatch, "/dev/input/event9")
+    listener, _ = _listener()
     assert listener._reacquire() == ["/dev/input/event9"]
     listener._stop_event.set()
     # A stop during the back-off must end the acquisition loop, not outlast it.
@@ -340,7 +345,7 @@ def test_spawn_reader_starts_a_named_daemon_thread_for_its_device():
 
 
 def test_supervise_waits_for_the_last_reader_and_leaves_at_once_on_stop():
-    listener, _ = _listener("/dev/input/event9")
+    listener, _ = _listener()
     finished = threading.Thread(target=lambda: None)
     finished.start()
     listener._readers = [finished]
@@ -412,21 +417,15 @@ def test_stop_closes_every_device_and_joins_every_reader():
     assert edges == ["start"]
 
 
-def test_reacquire_backs_off_between_scans_instead_of_spinning():
+def test_reacquire_backs_off_between_scans_instead_of_spinning(monkeypatch):
     """With no readable device, reacquisition must wait on the stop event.
 
     Waiting on the event (rather than sleeping) is what lets a stop during the
     back-off end the listener immediately; a busy loop would burn a core for as
     long as the keyboard is unplugged.
     """
+    scans = _detect(monkeypatch)
     listener, _ = _listener()
-    scans = []
-
-    def resolve_nothing():
-        scans.append(time.monotonic())
-        return []
-
-    listener._resolve_paths = resolve_nothing
     outcome = []
     worker = threading.Thread(target=lambda: outcome.append(listener._reacquire()), daemon=True)
     worker.start()
