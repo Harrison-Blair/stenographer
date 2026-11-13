@@ -20,10 +20,7 @@ def make_recording(root, lines, started_at=datetime(2026, 3, 2, 4, 5, 6, tzinfo=
 
 
 def write_unknown_length_flac(path):
-    """Write a FLAC file of only its header whose STREAMINFO gives no total sample count.
-
-    A recording whose source gave no audio leaves such a file.
-    """
+    """Write a FLAC file whose STREAMINFO gives no total sample count and that has no audio."""
     buffer = io.BytesIO()
     sf.write(buffer, np.zeros(16000, dtype=np.float32), 16000, format="FLAC")
     data = bytearray(buffer.getvalue())

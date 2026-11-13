@@ -24,7 +24,8 @@ _TITLE_SOURCES = frozenset({"model", "user"})
 _AUDIO_SOURCES = ("mic", "system")
 _SOURCE_ORDER = {"mic": 0, "system": 1}
 # libsndfile gives SF_COUNT_MAX (INT64_MAX) as the frame count of a FLAC file of unknown
-# length, for example a header-only file of a source that gave no audio.
+# length. The recorder leaves such a file when a write fails or when it ends before it
+# closes the file.
 UNKNOWN_FRAMES = 2**63 - 1
 
 

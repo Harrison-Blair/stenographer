@@ -230,7 +230,7 @@ def test_partial_session_is_listed_and_read_without_crashing(tmp_path):
 
 
 def test_a_track_of_unknown_length_adds_no_duration_and_keeps_its_size(tmp_path):
-    # A recording whose system source gave no audio: system.flac is only a header.
+    # system.flac has an unknown length.
     writer = SessionWriter.open(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
     writer.write_audio("mic", np.full(48000, 0.25, dtype=np.float32))
     writer.append_line(_line(0.0, 2.0, "you", "You", "placeholder"))

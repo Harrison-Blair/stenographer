@@ -264,7 +264,7 @@ async def test_the_open_session_fits_every_size(tmp_path, case, size):
 
 @pytest.mark.parametrize("size", [(120, 35), (60, 16)], ids=lambda size: f"{size[0]}x{size[1]}")
 async def test_a_track_of_unknown_length_shows_the_real_duration(tmp_path, size):
-    # A recording whose system source gave no audio: system.flac is only a header.
+    # system.flac has an unknown length.
     session = tmp_path / "sessions" / _write_session(tmp_path, 0)
     sf.write(session / "mic.flac", np.zeros(16000, dtype=np.float32), 16000, format="FLAC")
     write_unknown_length_flac(session / "system.flac")
