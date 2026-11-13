@@ -152,7 +152,9 @@ async def test_pilot_slow_work_keeps_hub_responsive(
             await task
 
 
-async def test_pilot_lifecycle_worker_finishes_after_hub_screen_unmount_without_failure(tmp_path):
+async def test_pilot_lifecycle_worker_finishes_after_hub_screen_unmount_without_failure(
+    tmp_path, monkeypatch
+):
     services = FakeServices()
     services.start_entered = threading.Event()
     services.start_release = threading.Event()
@@ -165,7 +167,12 @@ async def test_pilot_lifecycle_worker_finishes_after_hub_screen_unmount_without_
             worker = next(worker for worker in app.workers if worker.name == "start-recording")
             hub_screen = app.screen
             await app.push_screen(Screen())
-            await hub_screen.remove()
+            # The real hub removes its screens only after it stops running. A timer
+            # redraw in the middle of this removal sees a screen that is still
+            # attached but has no children, so no redraw runs until it ends.
+            with monkeypatch.context() as patch:
+                patch.setattr(app, "refresh_view", lambda: None)
+                await hub_screen.remove()
             assert not app.is_mounted(hub_screen)
 
             services.start_release.set()
