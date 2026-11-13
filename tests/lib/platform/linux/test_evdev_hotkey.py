@@ -89,6 +89,19 @@ def _detect(monkeypatch, *paths):
     return calls
 
 
+def _first_scan(monkeypatch) -> threading.Event:
+    """Wrap the replaced detection; the returned event is set at its first call."""
+    scanned = threading.Event()
+    detect = hotkey_module.auto_detect_paths
+
+    def signalled():
+        scanned.set()
+        return detect()
+
+    monkeypatch.setattr(hotkey_module, "auto_detect_paths", signalled)
+    return scanned
+
+
 def _register(listener, *devices):
     listener._devices = list(devices)
     listener._held_by_device = {id(device): set() for device in devices}
@@ -144,6 +157,7 @@ def test_detected_device_that_cannot_be_opened_backs_off_instead_of_spinning(mon
     Seen to FAIL against the pre-fix listener (count in the thousands).
     """
     calls = _detect(monkeypatch, "/dev/input/stenographer-nonexistent")
+    scanned = _first_scan(monkeypatch)
     listener = EvdevHotkeyListener(
         lock=threading.RLock(),
         bindings={"default": parse_binding("KEY_RIGHTALT", EvdevKeyTable())},
@@ -152,11 +166,13 @@ def test_detected_device_that_cannot_be_opened_backs_off_instead_of_spinning(mon
     )
     listener.start()
     try:
+        # The window starts at the first scan, not at Thread.start(), so a late
+        # thread start on a loaded machine cannot empty it.
+        assert scanned.wait(10), "listener never scanned for keyboards"
         time.sleep(0.3)
         # Still retrying, not given up: a listener that returns at once would
         # also scan fewer than 20 times.
         assert listener.is_running, "listener exited instead of retrying"
-        assert len(calls) >= 1, "listener never scanned for keyboards"
         assert len(calls) < 20, f"listener spun {len(calls)} times in 0.3s (expected backoff)"
     finally:
         listener.stop()
@@ -428,17 +444,20 @@ def test_reacquire_backs_off_between_scans_instead_of_spinning(monkeypatch):
     long as the keyboard is unplugged.
     """
     scans = _detect(monkeypatch)
+    scanned = _first_scan(monkeypatch)
     listener, _ = _listener()
     outcome = []
     worker = threading.Thread(target=lambda: outcome.append(listener._reacquire()), daemon=True)
     worker.start()
     try:
+        # The window starts at the first scan, not at Thread.start(), so a late
+        # thread start on a loaded machine cannot empty it.
+        assert scanned.wait(10), "reacquire never scanned for keyboards"
         time.sleep(0.2)
         # Still waiting, not given up: a reacquire that returns at once would
         # also scan fewer than 5 times.
         assert worker.is_alive(), "reacquire returned before the stop"
         assert outcome == []
-        assert len(scans) >= 1, "reacquire never scanned for keyboards"
         assert len(scans) < 5, f"reacquire scanned {len(scans)} times in 0.2s"
         listener._stop_event.set()
         worker.join(timeout=10)
