@@ -515,6 +515,33 @@ async def test_a_title_stored_between_two_polls_shows_at_the_next_poll(tmp_path)
         await _until(pilot, lambda: "Kilo lima" in _screen_text(app), "the title does not show")
 
 
+async def test_a_g_that_fails_between_two_polls_clears_generating_at_the_next_poll(tmp_path):
+    root, _sessions = _library(tmp_path)
+    services = FakeServices(root)
+    services.title_request.reply = RefineTransportError("ollama could not be reached")
+    app = make_app(tmp_path, services)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _open(pilot, app, 4)
+        await pilot.press("enter")
+        await _settle(pilot, app)
+        # One idle poll runs before g.
+        await pilot.pause(0.15)
+        # The event loop does not run while g starts, fails, and its thread ends.
+        app.library_screen.action_session_generate_title()
+        for thread in threading.enumerate():
+            if thread.name == THREAD_NAME:
+                thread.join(timeout=5)
+        assert not services.titles.generating
+        # Shorter than the one-second engine refresh: only the poll draws.
+        notice = "Could not generate a title: ollama could not be reached."
+        await _until(pilot, lambda: notice in _notices(app), "no notice")
+        await pilot.pause(0.15)
+        title = app.screen.query_one("#library-detail-title", Static)
+        assert title.content.plain != "generating…"
+        assert not _button(app, "library-title-button").disabled
+        assert not _button(app, "library-generate-button").disabled
+
+
 async def test_a_finished_file_job_gets_an_automatic_title(tmp_path):
     root, _sessions = _library(tmp_path)
     services = FakeServices(root)

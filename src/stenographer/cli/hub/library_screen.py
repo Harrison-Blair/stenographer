@@ -1283,6 +1283,9 @@ class LibraryScreen(HubScreen):
             app.notify("session busy", severity="warning")
             return
         self._generating = titles.generating
+        # This draw is not the poll's: the next poll draws again, also when the request
+        # has ended before it and stored nothing.
+        self._poll_key = None
         app.refresh_view()
 
     def _follow_titles(self) -> bool:
