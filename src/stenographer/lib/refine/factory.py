@@ -16,6 +16,12 @@ if TYPE_CHECKING:
 MIN_WORDS = 10
 
 
+def keep_alive_for(idle_unload_seconds: int) -> int:
+    """The ``keep_alive`` of every request to the Refine model; ``-1`` never unloads it."""
+
+    return -1 if idle_unload_seconds <= 0 else int(idle_unload_seconds)
+
+
 def build_refiner(
     cfg: RefineConfig,
     *,
@@ -38,7 +44,7 @@ def build_refiner(
         host=cfg.host,
         model=cfg.model,
         min_words=MIN_WORDS,
-        keep_alive=-1 if idle_unload_seconds <= 0 else int(idle_unload_seconds),
+        keep_alive=keep_alive_for(idle_unload_seconds),
         vocabulary=cfg.vocabulary,
         on_model_loading=on_model_loading,
         on_model_loading_finished=on_model_loading_finished,

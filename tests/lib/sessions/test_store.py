@@ -447,3 +447,28 @@ def test_search_matches_a_new_title_at_once(tmp_path):
     assert store.search("QUARTERLY") == (session.name,)
     store.set_title(session.name, "")
     assert store.search("quarterly") == ()
+
+
+def test_set_title_only_if_sees_the_stored_title_and_writes_only_when_it_allows(tmp_path):
+    session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    store = SessionStore(tmp_path / "sessions")
+    seen = []
+
+    def no_title(title, source):
+        seen.append((title, source))
+        return title is None
+
+    assert store.set_title(session.name, "First", source="model", only_if=no_title)
+    assert not store.set_title(session.name, "Second", source="model", only_if=no_title)
+    assert seen == [(None, None), ("First", "model")]
+    summary = store.read(session.name).summary
+    assert (summary.title, summary.title_source) == ("First", "model")
+
+
+def test_set_title_on_a_deleted_session_raises_and_makes_no_folder(tmp_path):
+    session = _write_session(tmp_path, datetime(2026, 3, 2, 4, 5, 6, tzinfo=UTC))
+    store = SessionStore(tmp_path / "sessions")
+    store.delete(session.name)
+    with pytest.raises(SessionNotFoundError):
+        store.set_title(session.name, "Late title", source="model", only_if=lambda *_: True)
+    assert not session.exists()

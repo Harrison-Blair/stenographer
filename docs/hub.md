@@ -121,8 +121,9 @@ status line: the state, the clock, one note (the microphone, `started HH:MM`,
 button keeps the width of its widest label, so a label change moves nothing.
 The session ID shows only in the full form, and the narrow tier uses short
 button labels such as `[enter] ■ Stop` and `[space] ● Record`. In the status
-line, `[d] device…` is the second button while no recording runs. Capture is local: Record never sends audio or
-transcript text over the network. Each state shows a glyph and a word, so it does not
+line, `[d] device…` is the second button while no recording runs. Capture is local: Record never sends audio over
+the network. When Refine is on, a saved recording sends samples of its
+transcript to the Refine host for a [title](#titles). Each state shows a glyph and a word, so it does not
 depend on colour.
 
 | State | REC panel | Keys |
@@ -312,8 +313,10 @@ created only for sources that were active during the session:
   with microphone diarization has it from the start, with `"diarize_mic": true`.
 
 These files are user data that you request when you record. The hub recording writes audio and transcripts to the session folder. A requested
-export writes a transcript to the selected folder. Logs and analytics do
-not contain transcript text or audio. See the [privacy
+export writes a transcript to the selected folder. When Refine is on, the hub
+sends samples of a saved transcript to the Refine host for a
+[title](#titles). Logs and analytics do not contain transcript text, titles, or
+audio. See the [privacy
 notes](usage.md#understand-privacy-and-network-access) for other Stenographer
 network behavior.
 
@@ -383,6 +386,7 @@ the selected entry in the table and in the open session:
 | `/` | Search titles and transcripts. |
 | `p` | Play or stop the session audio with `pw-play`. A file session plays its source file. On another session, `p` stops the audio that plays and starts that session. A notice shows when the player exits with an error. |
 | `e` | Edit the title of the session. An empty title removes the title. |
+| `g` | Generate a title with the Refine model. See [Titles](#titles). |
 | `r` | Rename a speaker of the session. Speakers that share a name are one row, and all of them get the new name. |
 | `d` | Re-diarize the session. This also needs the speech model. A file session cannot: use Re-transcribe. A recording without separated speakers (no system lines, and mic lines recorded as `You`) cannot either. |
 | `t` | Re-transcribe the session. A source with speaker separation also gets its speakers again, so labels can change. |
@@ -390,18 +394,45 @@ the selected entry in the table and in the open session:
 | `delete` | Delete the session after confirmation; this also stops its audio when it plays. On a queued or running file job, cancel the job after confirmation. |
 | `pageup` / `pagedown`, `home` / `end` | Move the selection one page, or to the first or last entry; in an open session, scroll the transcript. |
 
+### Titles
+
+The title row of the open session has `[e] Edit title…` and
+`[g] Generate title`; the narrow tier shows only `[e] Title…`, and `g` still
+acts. `g` asks the configured Refine model (`refine.host` and `refine.model`)
+for a one-line title. Before it replaces a title that you typed, it asks for
+confirmation: press `y` to generate or `n` to keep the title. While the model
+works, the title shows a dimmed `generating…` in the table and in the open
+session, and `e` and `g` on that session show `session busy`; the other keys act
+as before. A session without transcript lines gets no request. A failure shows a
+notice, and the title stays as it was.
+
+When Refine is on (`refine.enabled`) and its model is installed on the Refine
+host, each recording that the hub saves and each file job that finishes in the
+hub gets a title automatically, one request at a time in the background. An
+automatic title never replaces a title, and a failure leaves the session
+without a title and writes one warning to the log. Older sessions and sessions
+from `stenographer transcribe` get a title only from `g`.
+
+The request sends the whole transcript, or for a transcript of more than 1800
+words three samples of about 600 words from its start, middle, and end, with the
+speaker names. It goes only to the Refine host, which is loopback by default; a
+host that is not loopback receives these samples over the network. The reply
+must be one line of at most 80 characters, or it is discarded.
+
 The title is stored in the `session.json` of the session as `title`, with
-`title_source` `user` for a title that you typed. Like the transcript, the title
-stays in the session folder; the hub does not write it to logs, history, or
-analytics. A session without a title loads as before.
+`title_source` `user` for a title that you typed and `model` for a generated
+title. Like the transcript, the title stays in the session folder; the hub does
+not write it to logs, history, or analytics. A session without a title loads as
+before.
 
 For delete and job cancellation confirmations, press `y` to confirm or `n`
 to keep the session or job. `q` and `ctrl+c` do not confirm these prompts.
 
 While a re-diarize, re-transcribe, rename, title, delete, or file job changes a
-session, that session is busy: its Edit title, Rename, Re-diarize,
+session, that session is busy: its Edit title, Generate title, Rename, Re-diarize,
 Re-transcribe, and Delete buttons are dimmed, and their keys show the notice
-`session busy`. Play and Export still act. While a file job writes a new
+`session busy`. Play and Export still act. While the model generates a title,
+only Edit title and Generate title are dimmed. While a file job writes a new
 revision of the session, its Delete button is `Cancel job…` and `delete`
 cancels that file job. During `d`, `t`, a rename, a title, or a delete, the
 Delete button is dimmed and `delete` shows `session busy`.
@@ -586,8 +617,8 @@ its current settings.
 | Meter floor dBFS | `feedback.spectrum_floor_dbfs` | The floor of the Record meters and the dictation overlay in dBFS: one fixed value, or one value per band. |
 | Idle unload | `asr.idle_unload_seconds` | The seconds before the idle speech worker unloads, and how long Ollama keeps the refine model loaded when idle. Zero never unloads either one. |
 | Vocabulary | `refine.vocabulary` | Terms that refine spells exactly as written. |
-| Refine | `refine.enabled` | Runs text cleanup after each dictated utterance. File jobs and `stenographer transcribe --refine` choose it per run. Record does not use refine. |
-| Host | `refine.host` | The Ollama server of refine. A host that is not loopback receives transcript text. |
+| Refine | `refine.enabled` | Runs text cleanup after each dictated utterance. File jobs and `stenographer transcribe --refine` choose it per run. When it is on, the hub also asks the refine model for the [title](#titles) of each saved recording and finished file job. |
+| Host | `refine.host` | The Ollama server of refine and of titles. A host that is not loopback receives transcript text. |
 | Model | `refine.model` | The model name on the refine service. |
 | Separate room speakers | `live.diarize_mic` | Separates the speakers on the microphone as Room 1, Room 2, and so on. Off labels every microphone line You. It applies to new Record recordings. |
 

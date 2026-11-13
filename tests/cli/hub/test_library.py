@@ -25,6 +25,7 @@ from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.export_dialog import ExportDialog
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.services import HubServices
+from stenographer.cli.hub.session_titles import SessionTitles
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.lib.config.models import Config
 from stenographer.lib.files.models import FileJobProgress
@@ -61,10 +62,40 @@ class FakeJob:
         return True
 
 
+class FakeTitleRequest:
+    """Stand in for the title request: record each call; answer with ``reply`` or raise it."""
+
+    def __init__(self, reply: str | Exception = "A generated title"):
+        self.reply = reply
+        self.calls: list[tuple] = []
+        self.started = threading.Event()
+        # Set by default: a test that wants the request to wait clears it.
+        self.release = threading.Event()
+        self.release.set()
+
+    def __call__(self, host, model, text, *, keep_alive):
+        self.calls.append((host, model, text, keep_alive))
+        self.started.set()
+        if not self.release.wait(timeout=5):
+            raise TimeoutError("test title request timed out")
+        if isinstance(self.reply, Exception):
+            raise self.reply
+        return self.reply
+
+
 class FakeServices:
     def __init__(self, sessions_root: Path):
         self.session_store = SessionStore(sessions_root)
         self.session_jobs = self
+        self.config = Config.defaults()
+        self.title_request = FakeTitleRequest()
+        self.installed_models: set[str] = set()
+        self.titles = SessionTitles(
+            lambda: self.session_store,
+            lambda: self.config,
+            request=self.title_request,
+            installed=lambda host, model: model in self.installed_models,
+        )
         self.recording = False
         self.active_session_id = None
         self.jobs: list[FakeJob] = []
@@ -252,7 +283,7 @@ def test_library_table_cells_head_and_badge(tmp_path):
             hints = app.screen.query_one("#key-hints", Static).render().plain
             assert hints == (
                 "? help · q quit · enter open · n transcribe · / search · p play · e title · "
-                "r rename · d re-diarize · t re-transcribe · x export · del delete"
+                "g generate · r rename · d re-diarize · t re-transcribe · x export"
             )
 
             listing = app.screen.query_one("#library-list", Static).render()

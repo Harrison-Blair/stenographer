@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from stenographer.cli.hub.session_titles import SessionTitles
 from stenographer.lib.live.live_session import LiveSession
 from stenographer.lib.logging.pipeline import fmt_event
 from stenographer.lib.sessions import SessionStore
@@ -49,6 +50,7 @@ class HubServices:
         self._session_factory = session_factory
         self._session_store = session_store
         self._session_jobs: SessionJobs | None = None
+        self._titles: SessionTitles | None = None
         self._player_factory = player_factory
         self._player: subprocess.Popen | None = None
         self._player_session_id: str | None = None
@@ -112,6 +114,13 @@ class HubServices:
                 media_decoder=self._media_decoder,
             )
         return self._session_jobs
+
+    @property
+    def titles(self) -> SessionTitles:
+        """The model titles; the store and the config are read on its worker thread."""
+        if self._titles is None:
+            self._titles = SessionTitles(lambda: self.session_store, lambda: self._config)
+        return self._titles
 
     @property
     def files_running(self) -> bool:
@@ -205,7 +214,10 @@ class HubServices:
         return session
 
     def finish_stop(self, session: LiveSession) -> None:
-        """Save the session; it leaves the stopping list at the end."""
+        """Save the session; it leaves the stopping list at the end.
+
+        A saved session then waits for its automatic title on the title worker.
+        """
         try:
             session.stop()
         except Exception as exc:
@@ -216,6 +228,7 @@ class HubServices:
             with self._stops_changed:
                 self._stopping.remove(session)
                 self._stops_changed.notify_all()
+        self.titles.generate_auto(session.path.name)
 
     def show_next_failed_stop(self) -> None:
         """Bring the next failed stop forward on Record."""

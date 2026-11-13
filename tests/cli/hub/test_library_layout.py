@@ -10,6 +10,7 @@ from textual.widgets import Input
 
 from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.export_dialog import ExportDialog
+from stenographer.cli.hub.library_table import title_width
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.title_dialog import TitleDialog
 from stenographer.cli.hub.transcribe_dialog import TranscribeDialog
@@ -122,6 +123,28 @@ def _assert_session(app) -> None:
     lines = len(bar.bar_text(bar.size.width).plain.splitlines())
     assert lines <= (1 if height < 28 or width < 80 else 2), lines
     _assert_buttons_fit(app)
+    _assert_title_row(app)
+
+
+def _assert_title_row(app) -> None:
+    """Both title buttons from 80 columns, else only ``[e] Title…``; a cut title ends with ``…``."""
+    edit = app.screen.query_one("#library-title-button", HubButton)
+    generate = app.screen.query_one("#library-generate-button", HubButton)
+    row = _screen_text(app).splitlines()[edit.region.y]
+    if app.size.width >= 80:
+        assert generate.display and generate.region.area
+        assert "[e] Edit title…  [g] Generate title" in row, row
+    else:
+        assert not generate.display
+        assert "[e] Title…" in row and "[g]" not in row, row
+    title = app.screen.query_one("#library-detail-title")
+    shown = row[title.region.x : title.region.right].rstrip()
+    library = app.library_screen
+    full = library.selected_entry.summary
+    if full is not None and full.session_id in library._generating:
+        assert shown == "generating…", shown
+    elif full is not None and full.title is not None and len(full.title) > title.region.width:
+        assert shown.endswith("…") and full.title.startswith(shown[:-1].rstrip()), shown
 
 
 def _assert_buttons_fit(app) -> None:
@@ -196,8 +219,16 @@ def _playing(app):
     app.services.session_playback = lambda: (library.selected_id, 99.0)
 
 
+def _generating(app):
+    library = app.library_screen
+    app.services.title_request.release.clear()
+    assert app.services.titles.generate(library.selected_id)
+    library._generating = app.services.titles.generating
+
+
 SESSIONS = {
     "live": (lambda tmp_path: _sessions(tmp_path, 2), 2, 0, None),
+    "generating": (lambda tmp_path: _sessions(tmp_path, 2), 2, 0, _generating),
     "file": (_row_states, 7, 5, None),
     "job": (_row_states, 7, 1, None),
     "busy": (lambda tmp_path: _sessions(tmp_path, 2), 2, 0, _busy),
@@ -225,6 +256,7 @@ async def test_the_open_session_fits_every_size(tmp_path, case, size):
         await pilot.press("end")
         await _settle(pilot, app)
         assert _layout_problems(app) == []
+        app.services.title_request.release.set()
 
 
 async def _open_title(pilot, app):
@@ -356,3 +388,59 @@ async def test_the_title_dialog_keeps_its_text_and_selection_through_tier_change
             assert field.value == "Budget review"
             assert tuple(field.selection) == (0, 6)
             assert _layout_problems(app) == []
+
+
+def _title_slice(app) -> slice:
+    table = app.screen.query_one("#library-list")
+    heading = _screen_text(app).splitlines()[app.screen.query_one("#library-columns").region.y]
+    start = heading.index("title")
+    return slice(start, start + title_width(app.library_screen.tier, table.size.width))
+
+
+def _without(line: str, cells: slice) -> str:
+    return line[: cells.start] + line[cells.stop :]
+
+
+@pytest.mark.parametrize("size", SIZES, ids=lambda size: f"{size[0]}x{size[1]}")
+async def test_generating_moves_no_column_and_no_button(tmp_path, size):
+    services = _sessions(tmp_path, 2)
+    services.title_request.release.clear()
+    app = make_app(tmp_path, services)
+    async with app.run_test(size=size) as pilot:
+        await _show_table(pilot, app, 2)
+        library = app.library_screen
+        # The second entry has no title: "—" or its speakers, then "generating…".
+        library.select_entry(library.entries[1].entry_id)
+        await _settle(pilot, app)
+        y = app.screen.query_one("#library-list").region.y + 2
+        cells = _title_slice(app)
+        before = _screen_text(app).splitlines()[y : y + 2]
+        await pilot.press("g")
+        await _until(pilot, lambda: services.title_request.started.is_set())
+        await _until(pilot, lambda: "generating…" in _screen_text(app), "no generating…")
+        await _settle(pilot, app)
+        during = _screen_text(app).splitlines()[y : y + 2]
+        assert during[0][cells].rstrip() == "generating…"
+        assert [_without(line, cells) for line in during] == [
+            _without(line, cells) for line in before
+        ]
+        assert _layout_problems(app) == []
+
+        await pilot.press("enter")
+        await _settle(pilot, app)
+        ids = (
+            "#library-title-button",
+            "#library-generate-button",
+            "#library-speakers",
+            *(f"#{button_id}" for button_id in ACTIONS),
+        )
+        generating = {selector: app.screen.query_one(selector).region for selector in ids}
+        title = app.screen.query_one("#library-detail-title")
+        assert title.render().plain == "generating…"
+        services.title_request.release.set()
+        await _until(pilot, lambda: not services.titles.generating, "still generating")
+        await _until(pilot, lambda: "A generated title" in _screen_text(app), "no title")
+        await _settle(pilot, app)
+        assert {selector: app.screen.query_one(selector).region for selector in ids} == generating
+        assert _layout_problems(app) == []
+        _assert_session(app)

@@ -17,6 +17,7 @@ _ACCENT_BOLD = "bold #5fd7ff"
 _DIM = "#8b93a1"
 _MARKER = 2
 ELLIPSIS = "…"
+GENERATING = "generating…"
 
 
 @dataclass(frozen=True)
@@ -70,6 +71,8 @@ class TableRow:
     size: Text
     state: Text
     glyph: Text
+    # The model works on the title: the title cell shows a dimmed ``generating…``.
+    generating: bool = False
 
 
 def title_width(tier: str, width: int) -> int:
@@ -216,6 +219,8 @@ class LibraryTable(Static):
             return row.glyph, empty
         if name == "speakers":
             return self._speakers(row.speakers, cells)
+        if row.generating:
+            return Text(cut(GENERATING, cells), style=_DIM), Text("")
         if row.title is None:
             if self.tier == "narrow" and row.speakers:
                 top, bottom = two_lines(", ".join(row.speakers), cells)

@@ -245,6 +245,11 @@ anywhere. It is on by default, and its default host is loopback, so the text
 stays on the machine; pointing `[stenographer.refine] host` at another machine
 sends transcripts to it over the network.
 
+The hub sends transcript text to the same refine host for one more reason: when
+refine is on, it asks the refine model for a title of each recording that it
+saves and each file job that finishes, and `g` in the Library asks for one
+session. See [titles](hub.md#titles).
+
 It cleans filler words and self-corrections out of each transcript through a
 local Ollama model. The default is `gemma4:e2b`, about a 7.2 GB download;
 Model reasoning is always disabled. See
