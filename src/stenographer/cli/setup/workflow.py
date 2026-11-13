@@ -709,7 +709,7 @@ def _capture_or_choose_binding(
             "Press and release one key or a held chord now (15-second timeout; Ctrl-C cancels)."
         )
         try:
-            captured = current_platform().capture_binding(console.stdin, None, timeout=15.0)
+            captured = current_platform().capture_binding(console.stdin, timeout=15.0)
         except BindingCaptureError as exc:
             console.error(f"binding capture failed: {exc}")
         else:

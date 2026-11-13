@@ -17,6 +17,7 @@ import termios
 import pytest
 
 from stenographer.lib.hotkey.errors import BindingCaptureError
+from stenographer.lib.platform.linux import binding_capture as binding_capture_module
 from stenographer.lib.platform.linux.binding_capture import (
     _capture_paths,
     _quiet_terminal,
@@ -104,9 +105,10 @@ def test_capture_names_the_device_it_could_not_open():
     assert f"could not open hotkey device {_MISSING}" in str(raised.value)
 
 
-def test_capture_binding_uses_an_explicit_device_instead_of_auto_detecting():
-    # An explicit hotkey.device is honoured verbatim: a stale path fails on
-    # that path rather than silently capturing from some other keyboard.
+def test_capture_binding_opens_the_auto_detected_keyboards(monkeypatch):
+    # A detected keyboard that vanished before it is opened fails on that path,
+    # as the setup flow's own error rather than as OSError.
+    monkeypatch.setattr(binding_capture_module, "auto_detect_paths", lambda: [_MISSING])
     with pytest.raises(BindingCaptureError) as raised:
-        capture_binding(io.StringIO(), _MISSING, timeout=0.1)
-    assert _MISSING in str(raised.value)
+        capture_binding(io.StringIO(), timeout=0.1)
+    assert f"could not open hotkey device {_MISSING}" in str(raised.value)
