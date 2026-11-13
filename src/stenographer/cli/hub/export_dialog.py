@@ -61,11 +61,16 @@ class ExportDialog(Dialog[None]):
         with Horizontal(classes="export-row", id="export-format-row"):
             yield Label("Format")
             for name in FORMATS:
-                yield HubButton(
+                button = HubButton(
                     self._format_label(name),
                     action=f"choose_format('{name}')",
+                    tight=True,
                     id=f"export-format-{name}",
                 )
+                # Inline: the app rules of HubButton outrank dialog CSS. Tight buttons with
+                # a gap of 2 keep the row inside a dialog of 60 columns.
+                button.styles.margin = (0, 2, 0, 0)
+                yield button
         yield Label("tab next format", id="export-format-hint")
         with Horizontal(classes="export-row", id="export-folder-row"):
             yield Label("Folder")
