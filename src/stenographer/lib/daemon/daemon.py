@@ -210,7 +210,6 @@ class Daemon:
                 daemon.on_key_up()
 
         listener = plat.hotkey_listener(
-            device=None,
             lock=threading.RLock(),
             bindings={
                 RefineProfile.AGENT.value: parse_binding(cfg.hotkey.binding, keys),

@@ -701,7 +701,6 @@ def test_a_recorder_failure_during_shutdown_still_closes_the_utterance(daemon_lo
 def test_run_starts_the_listener_and_returns_once_stop_is_requested(daemon_logs):
     daemon = _daemon()
     listener = _Listener(
-        device=None,
         lock=threading.RLock(),
     )
     daemon._listener = listener
@@ -981,7 +980,7 @@ def test_the_daemon_refine_request_carries_the_vocabulary(ollama_wire, monkeypat
         worker=_Worker(None, None),
         recorder=_Recorder(np.zeros(16000, dtype=np.float32)),
     )
-    daemon._listener = _Listener(device=None, lock=threading.RLock())
+    daemon._listener = _Listener(lock=threading.RLock())
     daemon._deliverer = _Deliverer()
     try:
         daemon._refiner.refine("alpha bravo charlie")

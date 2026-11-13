@@ -247,7 +247,7 @@ def _daemon(
         worker=_Worker(result, error),
         recorder=_Recorder(samples),
     )
-    daemon._listener = _Listener(device=None, lock=threading.RLock())
+    daemon._listener = _Listener(lock=threading.RLock())
     daemon._deliverer = _Deliverer()
     if refiner is not None:
         daemon._refiner = refiner
@@ -334,7 +334,6 @@ class _Listener:
     def __init__(
         self,
         *,
-        device,
         lock,
         bindings=None,
         on_binding_start=None,
@@ -342,7 +341,6 @@ class _Listener:
         cancel=frozenset(),
         on_cancel=None,
     ) -> None:
-        self.device = device
         self.cancel = cancel
         self.lock = lock
         self.bindings = bindings
@@ -445,7 +443,7 @@ class _Platform:
 class _TrackerPlatform(_Platform):
     """Host double whose listener is the real chord tracker over one fake device."""
 
-    def hotkey_listener(self, *, device, **wiring):
+    def hotkey_listener(self, **wiring):
         self.listener = ChordTracker(**wiring)
         self.listener._held_by_device[1] = set()
         return self.listener
