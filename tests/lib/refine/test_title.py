@@ -16,11 +16,6 @@ from stenographer.lib.refine.title import (
 )
 
 
-def _lines(count: int, words: int = 10) -> list[str]:
-    """``count`` lines; line ``n`` holds ``words`` words ``wN``, so a sample shows its lines."""
-    return [" ".join([f"w{index}"] * words) for index in range(count)]
-
-
 def _reply(content: str, **extra) -> bytes:
     return json.dumps({"message": {"role": "assistant", "content": content}, **extra}).encode()
 
@@ -34,29 +29,63 @@ def test_an_empty_transcript_gives_no_text():
 
 
 def test_a_transcript_of_at_most_1800_words_is_sent_whole():
-    lines = _lines(180)
+    lines = _numbered(*[10] * 180)
     assert transcript_samples(lines) == "\n".join(lines)
 
 
-def test_a_longer_transcript_gives_600_words_from_the_start_the_middle_and_the_end():
-    # 181 lines of 10 words: 1810 words, so three samples of 60 lines.
-    lines = _lines(181)
-    start, middle, end = transcript_samples(lines).split("\n[…]\n")
-    assert start == "\n".join(lines[0:60])
-    # The middle line is 90; the sample takes 90, 91, 89, 92, 88, ... until 600 words:
-    # 30 lines after 90 and 29 before it.
-    assert middle == "\n".join(lines[61:121])
-    assert end == "\n".join(lines[121:181])
+def _numbered(*counts: int) -> list[str]:
+    """Lines of ``counts`` words; every word ``nK`` holds its own word position ``K``."""
+    lines, position = [], 0
+    for count in counts:
+        lines.append(" ".join(f"n{position + index}" for index in range(count)))
+        position += count
+    return lines
 
 
-def test_each_sample_takes_whole_lines_until_it_has_600_words():
-    # Lines of 250 words: three lines (750 words) reach 600, two (500) do not.
-    lines = _lines(20, words=250)
+def _positions(sample: str) -> list[int]:
+    return [int(word[1:]) for word in sample.split()]
+
+
+def _three(lines: list[str]) -> list[list[int]]:
     samples = transcript_samples(lines).split("\n[…]\n")
-    assert [len(sample.split()) for sample in samples] == [750, 750, 750]
-    assert samples[0] == "\n".join(lines[0:3])
-    assert samples[1] == "\n".join(lines[9:12])
-    assert samples[2] == "\n".join(lines[17:20])
+    assert len(samples) == 3
+    return [_positions(sample) for sample in samples]
+
+
+def test_exactly_1800_words_are_sent_whole():
+    lines = _numbered(*[100] * 18)
+    assert transcript_samples(lines) == "\n".join(lines)
+
+
+def test_1801_words_give_three_samples_of_600_words_by_word_position():
+    start, middle, end = _three(_numbered(*[100] * 18, 1))
+    assert start == list(range(0, 600))
+    # The middle word is 900: 300 words before it and 300 from it.
+    assert middle == list(range(600, 1200))
+    assert end == list(range(1201, 1801))
+
+
+def test_one_line_of_2001_words_gives_three_different_samples():
+    start, middle, end = _three(_numbered(2001))
+    assert start == list(range(0, 600))
+    assert middle == list(range(700, 1300))
+    assert end == list(range(1401, 2001))
+
+
+def test_a_long_line_between_short_lines_gives_samples_that_share_no_word():
+    # 30 lines of 10 words, one line of 1500 words, 30 lines of 10 words: 2100 words.
+    start, middle, end = _three(_numbered(*[10] * 30, 1500, *[10] * 30))
+    assert [len(start), len(middle), len(end)] == [600, 600, 600]
+    assert start == list(range(0, 600))
+    assert middle == list(range(750, 1350))
+    assert end == list(range(1500, 2100))
+    assert not (set(start) & set(middle) or set(middle) & set(end) or set(start) & set(end))
+
+
+def test_a_sample_keeps_the_line_breaks_of_its_words():
+    lines = _numbered(*[10] * 181)
+    start = transcript_samples(lines).split("\n[…]\n")[0]
+    assert start == "\n".join(lines[0:60])
 
 
 # The request body
@@ -89,7 +118,7 @@ def test_request_title_posts_the_body_to_the_host_and_returns_the_title():
     [(host, body, timeout)] = posted
     assert host == "http://127.0.0.1:11434"
     assert body == build_title_body("You: the venue", model="gemma4:e2b", keep_alive=-1)
-    assert timeout > 0
+    assert timeout == 150.0
 
 
 def test_request_title_passes_a_transport_failure_on():

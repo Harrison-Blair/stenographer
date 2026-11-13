@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -16,7 +17,7 @@ from stenographer.cli.hub.session_titles import SessionTitles
 from stenographer.lib.config.models import Config
 from stenographer.lib.live.session_writer import SessionWriter
 from stenographer.lib.live.transcript_line import TranscriptLine
-from stenographer.lib.refine.errors import RefineTransportError
+from stenographer.lib.refine.errors import RefineTimeoutError, RefineTransportError
 from stenographer.lib.refine.title import request_title
 from stenographer.lib.sessions import SessionStore
 from tests.cli.hub.test_library import FakeTitleRequest
@@ -43,6 +44,9 @@ class Harness:
         self.request = FakeTitleRequest(reply) if request is None else request
         self.installed_calls: list[tuple[str, str]] = []
         self.installed = installed
+        # Set by default: a test that wants the model check to wait clears it.
+        self.installed_gate = threading.Event()
+        self.installed_gate.set()
         self.titles = SessionTitles(
             lambda: self.store,
             lambda: self.config,
@@ -53,6 +57,7 @@ class Harness:
 
     def _installed(self, host, model):
         self.installed_calls.append((host, model))
+        assert self.installed_gate.wait(5), "the test did not release the model check"
         return self.installed
 
     def drain(self) -> None:
@@ -222,17 +227,57 @@ def test_a_failure_of_g_gives_a_notice_with_the_reason(tmp_path):
     assert harness.title(session) == (None, None)
 
 
-def test_the_worker_keeps_working_after_a_config_that_cannot_be_read(tmp_path, caplog):
+@pytest.mark.parametrize("change", ["refine-off", "other-host", "other-model"])
+def test_no_automatic_request_when_the_refine_config_changes_during_the_model_check(
+    tmp_path, change
+):
     harness = Harness(tmp_path)
-    good = harness.config
+    harness.installed_gate.clear()
     session = _session(tmp_path, 0)
-    harness.config = None
-    caplog.set_level(logging.WARNING)
     harness.titles.generate_auto(session)
-    _wait(lambda: any("title_failed" in record.getMessage() for record in caplog.records))
-    harness.config = good
+    _wait(lambda: harness.installed_calls)
+    refine = harness.config.refine
+    changed = {
+        "refine-off": replace(refine, enabled=False),
+        "other-host": replace(refine, host="http://127.0.0.2:11434"),
+        "other-model": replace(refine, model="other:latest"),
+    }[change]
+    harness.config = replace(harness.config, refine=changed)
+    harness.installed_gate.set()
     harness.drain()
-    assert harness.requests_for("sentinel")
+    assert harness.requests_for(SECRET) == []
+    assert harness.title(session) == (None, None)
+
+
+def test_lines_without_text_send_no_request_and_g_shows_the_notice(tmp_path):
+    harness = Harness(tmp_path)
+    writer = SessionWriter.open(tmp_path, STARTED + timedelta(minutes=5))
+    for index in range(3):
+        writer.append_line(TranscriptLine(index, index + 1.0, "", "mic", "you", "You", ""))
+    writer.close()
+    session = writer.path.name
+    harness.titles.generate_auto(session)
+    harness.drain()
+    assert harness.titles.generate(session)
+    harness.drain()
+    assert [call[2] for call in harness.request.calls] == ["You: sentinel words"] * 2
+    assert harness.titles.take_notices() == [("This session has no transcript lines.", "warning")]
+    assert harness.title(session) == (None, None)
+
+
+def test_a_failure_after_the_session_was_deleted_gives_no_notice(tmp_path, caplog):
+    harness = Harness(tmp_path, reply=RefineTimeoutError("ollama did not answer in time"))
+    harness.request.release.clear()
+    session = _session(tmp_path, 0)
+    caplog.set_level(logging.WARNING)
+    assert harness.titles.generate(session)
+    assert harness.request.started.wait(5)
+    harness.store.delete(session)
+    harness.request.release.set()
+    _wait(lambda: session not in harness.titles.generating)
+    assert harness.titles.take_notices() == []
+    # The warning stays: it names an outcome, not content.
+    assert ["title_failed" in record.getMessage() for record in caplog.records] == [True]
 
 
 # Privacy
@@ -242,33 +287,49 @@ def _reply(content: str) -> bytes:
     return json.dumps({"message": {"role": "assistant", "content": content}}).encode()
 
 
-@pytest.mark.parametrize("run", ["g", "auto", "failed-g", "failed-auto"])
-def test_no_title_and_no_transcript_text_in_the_debug_log(tmp_path, caplog, run):
-    failed = run.startswith("failed")
-    # The real request with a fake post: a failed run gets two lines that quote the transcript.
-    reply = f"{SECRET}\n{TITLE}" if failed else TITLE
-    harness = Harness(
-        tmp_path,
-        request=lambda host, model, text, *, keep_alive: request_title(
-            host, model, text, keep_alive=keep_alive, post=lambda *_a, **_k: _reply(reply)
-        ),
-    )
+MARKER = "platypusmarker"
+FAILED_REPLIES = {
+    "not-json": f"{MARKER} {SECRET} is not JSON".encode(),
+    "two-lines": _reply(f"{MARKER} {TITLE}\n{SECRET}"),
+    "81-characters": _reply(f"{MARKER} {SECRET} " + "x" * 81),
+}
+
+
+def _formatted(caplog) -> str:
+    """Every record as a handler writes it: message, traceback, causes, and contexts."""
+    formatter = logging.Formatter("%(levelname)s %(name)s %(message)s")
+    return "\n".join(formatter.format(record) for record in caplog.records)
+
+
+@pytest.mark.parametrize("trigger", ["g", "auto"])
+@pytest.mark.parametrize("reply", [None, *FAILED_REPLIES], ids=lambda r: r or "stored")
+def test_no_title_and_no_transcript_text_in_the_formatted_debug_log(
+    tmp_path, caplog, trigger, reply
+):
+    payload = _reply(TITLE) if reply is None else FAILED_REPLIES[reply]
+
+    def request(host, model, text, *, keep_alive):
+        # The real request and reply check with a fake post.
+        return request_title(
+            host, model, text, keep_alive=keep_alive, post=lambda *_a, **_k: payload
+        )
+
+    harness = Harness(tmp_path, request=request)
     session = _session(tmp_path, 0)
     caplog.set_level(logging.DEBUG)
-    if run.endswith("g"):
+    if trigger == "g":
         assert harness.titles.generate(session)
     else:
         harness.titles.generate_auto(session)
     harness.drain()
-    text = "\n".join(record.getMessage() for record in caplog.records)
-    # The log has the events of the run: the capture works.
-    assert ("title_failed" if failed else "title_saved") in text
-    for content in (SECRET, "zebracorn", "marmalade", TITLE, "Quokka", "sentinel words"):
+    text = _formatted(caplog)
+    # The log has the events of the run, with a traceback for a failure: the capture works.
+    assert ("title_saved" if reply is None else "title_failed") in text
+    if reply is not None:
+        assert "Traceback" in text
+    for content in (MARKER, SECRET, "zebracorn", "marmalade", TITLE, "Quokka", "sentinel words"):
         assert content not in text
-    for record in caplog.records:
-        if record.exc_info:
-            assert SECRET not in str(record.exc_info[1])
-    assert harness.title(session) == ((None, None) if failed else (TITLE, "model"))
+    assert harness.title(session) == ((TITLE, "model") if reply is None else (None, None))
 
 
 def test_a_saved_recording_queues_its_title_and_the_save_does_not_wait_for_the_model(tmp_path):

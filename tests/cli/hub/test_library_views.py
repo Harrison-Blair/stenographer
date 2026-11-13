@@ -17,6 +17,7 @@ from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.export_dialog import ExportDialog
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.services import HubServices
+from stenographer.cli.hub.session_titles import THREAD_NAME
 from stenographer.cli.hub.title_dialog import TitleDialog
 from stenographer.cli.hub.widgets.button import HubButton
 from stenographer.cli.hub.widgets.status_token import StatusToken
@@ -495,6 +496,23 @@ async def test_a_session_without_transcript_lines_gets_no_request_and_a_notice(t
         notice = "This session has no transcript lines."
         await _until(pilot, lambda: notice in _notices(app), "no notice")
     assert services.title_request.calls == []
+
+
+async def test_a_title_stored_between_two_polls_shows_at_the_next_poll(tmp_path):
+    root, sessions = _library(tmp_path)
+    services = FakeServices(root)
+    services.title_request.reply = "Kilo lima"
+    services.installed_models.add(services.config.refine.model)
+    app = make_app(tmp_path, services)
+    async with app.run_test(size=(120, 35)) as pilot:
+        await _open(pilot, app, 4)
+        # The event loop does not run while the request starts and ends.
+        services.titles.generate_auto(sessions["relabeled"])
+        for thread in threading.enumerate():
+            if thread.name == THREAD_NAME:
+                thread.join(timeout=5)
+        assert SessionStore(root).read(sessions["relabeled"]).summary.title == "Kilo lima"
+        await _until(pilot, lambda: "Kilo lima" in _screen_text(app), "the title does not show")
 
 
 async def test_a_finished_file_job_gets_an_automatic_title(tmp_path):

@@ -203,6 +203,7 @@ class LibraryScreen(HubScreen):
         self._session_work: dict[str, str] = {}
         # The sessions whose title the model works on, as the last poll read them.
         self._generating: frozenset[str] = frozenset()
+        self._titles_stored = 0
         self._removed_jobs: set[str] = set()
         self._owner_ids = itertools.count(1)
         self._pending_select: str | None = None
@@ -1285,14 +1286,16 @@ class LibraryScreen(HubScreen):
         app.refresh_view()
 
     def _follow_titles(self) -> bool:
-        """Show the notices of ``g`` and the new generating set; true when a title ended."""
+        """Show the notices of ``g`` and the new generating set; true when a title was stored."""
         titles = self.app.services.titles
         for message, severity in titles.take_notices():
             self.app.notify(message, severity=severity)
-        generating = titles.generating
-        ended = bool(self._generating - generating)
-        self._generating = generating
-        return ended
+        self._generating = titles.generating
+        # A count, not the generating set: a title stored between two polls still counts.
+        stored = titles.stored
+        changed = stored != self._titles_stored
+        self._titles_stored = stored
+        return changed
 
     def action_session_export(self) -> None:
         entry = self._selected_session()

@@ -10,6 +10,7 @@ fixed reason, never the transcript or the reply.
 
 from __future__ import annotations
 
+import itertools
 from typing import TYPE_CHECKING
 
 from stenographer.lib.refine.client import post_chat
@@ -44,30 +45,27 @@ def transcript_samples(lines: Sequence[str]) -> str:
     """Return the text to send: the whole transcript, or three samples of it. PURE.
 
     A transcript of at most three samples of words is sent whole. A longer one gives
-    whole lines from the start, around the middle, and from the end, each until it
-    holds at least :data:`SAMPLE_WORDS` words. An empty transcript gives ``""``.
+    :data:`SAMPLE_WORDS` words each from the start, around the middle word, and from
+    the end, by word position: no word is in two samples, and a sample may start or end
+    inside a line. A sample keeps the line breaks between its words. An empty
+    transcript gives ``""``.
     """
 
     lines = [line for line in lines if line.split()]
-    counts = [len(line.split()) for line in lines]
-    if sum(counts) <= 3 * SAMPLE_WORDS:
+    words = [(number, word) for number, line in enumerate(lines) for word in line.split()]
+    if len(words) <= 3 * SAMPLE_WORDS:
         return "\n".join(lines)
-    count = len(lines)
-    middle = count // 2
-    around = [middle]
-    for step in range(1, count):
-        around += [index for index in (middle + step, middle - step) if 0 <= index < count]
-    samples = []
-    for order in (range(count), around, range(count - 1, -1, -1)):
-        picked: list[int] = []
-        words = 0
-        for index in order:
-            if words >= SAMPLE_WORDS:
-                break
-            picked.append(index)
-            words += counts[index]
-        samples.append("\n".join(lines[index] for index in sorted(picked)))
-    return SAMPLE_GAP.join(samples)
+    middle = len(words) // 2 - SAMPLE_WORDS // 2
+    starts = (0, middle, len(words) - SAMPLE_WORDS)
+    return SAMPLE_GAP.join(_join(words[start : start + SAMPLE_WORDS]) for start in starts)
+
+
+def _join(words: list[tuple[int, str]]) -> str:
+    """Join ``(line number, word)`` pairs: a space inside a line, a line break between lines."""
+    text = words[0][1]
+    for (line, _), (next_line, word) in itertools.pairwise(words):
+        text += ("\n" if next_line != line else " ") + word
+    return text
 
 
 def build_title_body(text: str, *, model: str, keep_alive: int) -> dict[str, object]:

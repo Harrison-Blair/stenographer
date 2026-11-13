@@ -16,6 +16,7 @@ from stenographer.lib.refine.errors import RefineError
 from stenographer.lib.refine.factory import keep_alive_for
 from stenographer.lib.refine.title import request_title, transcript_samples
 from stenographer.lib.sessions.errors import SessionNotFoundError
+from stenographer.lib.sessions.reader import session_directory
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -41,6 +42,8 @@ class _Request:
     manual: bool
     # The ``user`` title that the user agreed to replace with ``g``.
     replace: str | None = None
+    # The Refine host and model whose installed check let an automatic request start.
+    checked: tuple[str, str] | None = None
 
 
 class SessionTitles:
@@ -68,12 +71,19 @@ class SessionTitles:
         # Replaced as a whole, so the event loop reads it without the lock.
         self._generating: frozenset[str] = frozenset()
         self._running = False
+        # Replaced, never changed in place: the count of stored titles, read by the poll.
+        self._stored = 0
         self._notices: deque[tuple[str, str]] = deque()
 
     @property
     def generating(self) -> frozenset[str]:
         """The sessions whose title the model works on, or that wait for ``g``."""
         return self._generating
+
+    @property
+    def stored(self) -> int:
+        """How many titles this worker stored; a new value means a title to show."""
+        return self._stored
 
     def take_notices(self) -> list[tuple[str, str]]:
         """Return and forget the ``(message, severity)`` notices of ``g``."""
@@ -120,13 +130,7 @@ class SessionTitles:
                 finally:
                     self._finish(item.session_id)
             else:
-                try:
-                    self._run_auto(item.session_id)
-                except Exception as exc:
-                    # The worker must outlive one bad request, or every later title waits forever.
-                    log_failure(
-                        log, logging.WARNING, "hub: title_failed", exc, safe=False, trigger="auto"
-                    )
+                self._run_auto(item.session_id)
 
     def _finish(self, session_id: str) -> None:
         with self._lock:
@@ -143,7 +147,7 @@ class SessionTitles:
                 return
             self._generating = self._generating | {session_id}
         try:
-            self._title(_Request(session_id, manual=False))
+            self._title(_Request(session_id, manual=False, checked=(refine.host, refine.model)))
         finally:
             self._finish(session_id)
 
@@ -160,12 +164,15 @@ class SessionTitles:
             # A RefineError has a fixed reason; any other text could quote the reply.
             safe = isinstance(exc, RefineError)
             log_failure(log, logging.WARNING, "hub: title_failed", exc, safe=safe, trigger=trigger)
-            if item.manual:
+            # A session deleted during the request drops the result with no notice.
+            if item.manual and session_directory(self._store().root, item.session_id) is not None:
                 reason = f": {exc}" if safe else ""
                 self._notices.append((f"{FAILED}{reason}.", "error"))
             return
         if saved is None:
             return
+        if saved:
+            self._stored += 1
         fields = {
             "session_id": item.session_id,
             "trigger": trigger,
@@ -185,13 +192,20 @@ class SessionTitles:
         if not item.manual and detail.summary.title is not None:
             log.debug(fmt_event("hub", "title_skipped", session_id=session_id, reason="titled"))
             return None
-        text = transcript_samples(tuple(f"{line.label}: {line.text}" for line in detail.lines))
+        text = transcript_samples(
+            tuple(f"{line.label}: {line.text}" for line in detail.lines if line.text.strip())
+        )
         if not text:
             log.debug(fmt_event("hub", "title_skipped", session_id=session_id, reason="empty"))
             if item.manual:
                 self._notices.append((NO_LINES, "warning"))
             return None
         config = self._config()
+        refine = config.refine
+        if not item.manual and (not refine.enabled or (refine.host, refine.model) != item.checked):
+            # Refine changed after the installed check: that check no longer covers the request.
+            log.debug(fmt_event("hub", "title_skipped", session_id=session_id, reason="refine"))
+            return None
         title = self._request(
             config.refine.host,
             config.refine.model,
