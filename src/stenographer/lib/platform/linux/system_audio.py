@@ -104,7 +104,7 @@ class LinuxSystemAudioCapture:
         self._process = process
         self._thread = threading.Thread(
             target=read_stdout,
-            args=(process, decoder, on_block, self._stopping, SystemAudioCaptureError),
+            args=(process, decoder, on_block, self._stopping, SystemAudioCaptureError, "system"),
             daemon=True,
         )
         self._thread.start()

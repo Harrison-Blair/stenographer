@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 import threading
@@ -67,7 +68,10 @@ if os.environ.get('PW_AU') == '1':
 sys.stdout.buffer.write(struct.pack(order + '4f', 9.0, 9.0, 9.0, 9.0))
 sys.stdout.buffer.flush()
 time.sleep(0.3)
-sys.stdout.buffer.write(struct.pack(order + '512f', 0.25, -0.5, 0.75, -1.0, *([0.0] * 508)))
+values = [0.25, -0.5, 0.75, -1.0, *([0.0] * 508)]
+if os.environ.get('PW_NON_FINITE') == '1':
+    values[4] = float('nan')
+sys.stdout.buffer.write(struct.pack(order + '512f', *values))
 sys.stdout.buffer.flush()
 if os.environ.get('PW_EXIT_EARLY') == '1':
     raise SystemExit(17)
@@ -114,6 +118,7 @@ def _install_tools(
     monkeypatch.setenv("PW_CAPTURE_PID", str(tmp_path / "pid.txt"))
     monkeypatch.setenv("PW_LINK_OUTPUT", str(link_output_path))
     monkeypatch.setenv("PW_LINK_DELAY", "0.15")
+    monkeypatch.delenv("PW_NON_FINITE", raising=False)
     if au:
         monkeypatch.setenv("PW_AU", "1")
     else:
@@ -292,3 +297,29 @@ def test_capture_requires_a_link_inspection_tool(tmp_path, monkeypatch):
 
     assert available is False
     assert reason is not None and "pw-link" in reason and "pw-dump" in reason
+
+
+def test_a_system_capture_with_a_nan_sample_logs_one_warning_for_the_system_source(
+    tmp_path, monkeypatch, caplog
+):
+    _install_tools(tmp_path, monkeypatch)
+    monkeypatch.setenv("PW_NON_FINITE", "1")
+    capture = LinuxSystemAudioCapture()
+    blocks: list[np.ndarray] = []
+    received = threading.Event()
+
+    def receive(block):
+        assert isinstance(block, np.ndarray)
+        blocks.append(block)
+        received.set()
+
+    with caplog.at_level(logging.WARNING, logger="stenographer.lib.platform.linux.pw_record"):
+        capture.start(receive)
+        try:
+            assert received.wait(timeout=2)
+        finally:
+            capture.stop()
+
+    assert blocks[0][:5].tolist() == [0.25, -0.5, 0.75, -1.0, 0.0]
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages == ["capture: non_finite_samples_replaced source=system count=1"]

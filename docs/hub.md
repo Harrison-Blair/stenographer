@@ -223,7 +223,10 @@ unplugged or absent, that source turns off, Record shows `! mic stopped` or
 `live: system_source_failed`, and the other source keeps recording. Nothing
 restarts. The line shows exactly while the source is off because its capture
 failed and you have not pressed its key (`m` or `s`) since; stopping the
-recording clears it.
+recording clears it. A sample that `pw-record` delivers as NaN or infinity
+becomes silence (0.0), so the audio file keeps recording; when such a capture
+ends, the log gets one `capture: non_finite_samples_replaced` warning with the
+source and the count. Dictation reads the microphone the same way.
 
 ### Prepare the models
 
