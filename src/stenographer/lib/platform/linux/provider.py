@@ -92,10 +92,10 @@ class LinuxPlatform(DiagnosticsHostMixin):
             on_cancel=on_cancel,
         )
 
-    def capture_binding(self, stdin: TextIO, device: str | None, *, timeout: float) -> str:
+    def capture_binding(self, stdin: TextIO, *, timeout: float) -> str:
         from stenographer.lib.platform.linux.binding_capture import capture_binding
 
-        return capture_binding(stdin, device, timeout=timeout)
+        return capture_binding(stdin, timeout=timeout)
 
     # --- output ---
     def key_injector(self) -> KeyInjector:
