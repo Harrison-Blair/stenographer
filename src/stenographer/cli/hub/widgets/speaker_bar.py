@@ -42,6 +42,9 @@ class SpeakerBar(Static):
 
     def on_resize(self) -> None:
         update_changed(self, self.bar_text(self.size.width))
+        # The layout of this resize measured the old text at the new width; measure the
+        # new text, or the row keeps the height of the old one.
+        self.call_after_refresh(self.refresh, layout=True)
 
     def bar_text(self, width: int) -> Text:
         """Return the items flowed into ``width`` cells; no width yet gives one row."""

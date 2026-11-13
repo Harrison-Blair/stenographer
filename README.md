@@ -191,11 +191,12 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   Library. Use `v` for mixed or split transcripts, `m` or `s` to toggle audio
   sources, and `d` to choose the input device for this run. Scroll with `up`/`down`,
   `pageup`/`pagedown`, `home`/`end`, or the mouse wheel; the view follows new
-  lines at the bottom. Library lists recordings, file sessions, and file
-  jobs; press `/` to search session IDs, times (including displayed recording
-  dates), file names, and transcripts, `p` to play, `d` or `t` to
-  re-diarize or re-transcribe, `x` to export, and `delete` to delete or cancel
-  a job; confirm with `y` or cancel with `n`. Press `n` there to transcribe a file: the dialog browses from your
+  lines at the bottom. Library is one table of recordings, file sessions, and
+  file jobs; `enter` opens the selected entry on the full screen and `escape`
+  returns. Press `/` to search titles, session IDs, times (including displayed
+  recording dates), file names, and transcripts, `p` to play, `e` to edit the
+  title, `d` or `t` to re-diarize or re-transcribe, `x` to export, and `delete`
+  to delete or cancel a job; confirm with `y` or cancel with `n`. Press `n` there to transcribe a file: the dialog browses from your
   home folder, including hidden folders; search with a leading dot to find hidden audio. Folder read errors show their reason. The dialog sets Separate speakers and Refine text, and
   queues one job that shows in the list at once. Help and quit appear first in the footer. Long Settings values are cut with `…`. Settings has two tabs: one page of
   settings in six groups, and Checks; `●` marks an unsaved change, `ctrl+s`

@@ -39,6 +39,7 @@ from stenographer.lib.sessions.reader import (
     session_directory,
     session_metadata,
     session_started_at,
+    session_title,
     source_file_path,
 )
 
@@ -82,7 +83,7 @@ class SessionStore:
 
     def __init__(self, sessions_root: str | Path) -> None:
         self.root = Path(sessions_root).expanduser().resolve(strict=False)
-        self._search_texts: dict[str, tuple[tuple[str, int], tuple[str, ...]]] = {}
+        self._search_texts: dict[str, tuple[tuple, tuple[str, ...]]] = {}
         self._summaries: dict[str, tuple[frozenset, SessionSummary]] = {}
 
     def _directory(self, session_id: str) -> Path:
@@ -109,7 +110,7 @@ class SessionStore:
             signature = _folder_signature(directory)
             cached = self._summaries.get(session_id)
             if cached is None or cached[0] != signature:
-                summary = read_session(directory, session_id, with_activity=False).summary
+                summary = read_session(directory, session_id).summary
                 cached = self._summaries[session_id] = (signature, summary)
             summaries.append(cached[1])
         return tuple(summaries)
@@ -134,9 +135,8 @@ class SessionStore:
         )
 
     def read(self, session_id: str) -> SessionDetail:
-        """Read the transcript and derive talk time and FLAC activity on demand."""
-        directory = self._directory(session_id)
-        return read_session(directory, session_id, with_activity=True)
+        """Read the transcript and derive the talk time of each speaker."""
+        return read_session(self._directory(session_id), session_id)
 
     def write_revision(
         self,
@@ -160,17 +160,7 @@ class SessionStore:
             original = directory / "transcript.jsonl"
             if not original.is_file():
                 raise FileNotFoundError(f"original transcript is missing: {original}")
-            metadata_path = directory / "session.json"
-            try:
-                metadata_mode = metadata_path.lstat().st_mode
-            except FileNotFoundError:
-                metadata = {}
-            else:
-                if not stat.S_ISREG(metadata_mode):
-                    raise ValueError(f"session metadata is not a regular file: {metadata_path}")
-                metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-                if not isinstance(metadata, dict):
-                    raise ValueError(f"session metadata is not an object: {metadata_path}")
+            metadata = self._metadata_to_write(directory)
             current, _, _ = current_revision(directory)
             if current != expected_revision:
                 raise StaleRevisionError(
@@ -211,6 +201,43 @@ class SessionStore:
                         path.unlink(missing_ok=True)
                 raise
         return filename
+
+    @staticmethod
+    def _metadata_to_write(directory: Path) -> dict:
+        """Return ``session.json`` to update; an absent file gives an empty object.
+
+        A file that is not a regular file or not a JSON object raises, so a write never
+        replaces metadata that it could not read.
+        """
+        metadata_path = directory / "session.json"
+        try:
+            metadata_mode = metadata_path.lstat().st_mode
+        except FileNotFoundError:
+            return {}
+        if not stat.S_ISREG(metadata_mode):
+            raise ValueError(f"session metadata is not a regular file: {metadata_path}")
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if not isinstance(metadata, dict):
+            raise ValueError(f"session metadata is not an object: {metadata_path}")
+        return metadata
+
+    def set_title(self, session_id: str, title: str, *, source: str = "user") -> None:
+        """Store the title and its source (``model`` or ``user``); a blank title removes both."""
+        if source not in {"model", "user"}:
+            raise ValueError(f"unknown title source: {source}")
+        directory = self._directory(session_id)
+        with _session_lock(self.root / session_id):
+            metadata = self._metadata_to_write(directory)
+            # A session without session.json reads its first transcript; keep that.
+            metadata.setdefault("current_revision", "transcript.jsonl")
+            cleaned = " ".join(title.split())
+            if cleaned:
+                metadata["title"] = cleaned
+                metadata["title_source"] = source
+            else:
+                metadata.pop("title", None)
+                metadata.pop("title_source", None)
+            write_session_json(directory, metadata)
 
     def next_revision_name(self, session_id: str) -> str:
         """Return the file name that the next revision of this session gets."""
@@ -323,7 +350,7 @@ class SessionStore:
 
     def export(self, session_id: str, output_folder: str | Path, format: str) -> Path:
         """Export the current transcript to the requested output folder."""
-        detail = read_session(self._directory(session_id), session_id, with_activity=False)
+        detail = read_session(self._directory(session_id), session_id)
         return export_transcript(
             detail.lines,
             output_folder,
@@ -343,7 +370,7 @@ class SessionStore:
         if not cleaned_name:
             raise ValueError("speaker name must not be empty")
         with _session_lock(self.root / session_id):
-            detail = read_session(self._directory(session_id), session_id, with_activity=False)
+            detail = read_session(self._directory(session_id), session_id)
             if not any(line.speaker_id == speaker_id for line in detail.lines):
                 raise ValueError(f"speaker not found: {speaker_id}")
             renamed = tuple(
@@ -360,7 +387,7 @@ class SessionStore:
         if not cleaned_name:
             raise ValueError("speaker name must not be empty")
         with _session_lock(self.root / session_id):
-            detail = read_session(self._directory(session_id), session_id, with_activity=False)
+            detail = read_session(self._directory(session_id), session_id)
             labels = {line.speaker_id: line.label for line in detail.lines}
             if speaker_id not in labels:
                 raise ValueError(f"speaker not found: {speaker_id}")
@@ -378,7 +405,7 @@ class SessionStore:
             return ()
         try:
             revision, path, _ = current_revision(directory)
-            key = (revision, path.lstat().st_mtime_ns)
+            key = (revision, path.lstat().st_mtime_ns, self._metadata_mtime(directory))
             path.open("rb").close()
         except OSError:
             self._search_texts.pop(session_id, None)
@@ -394,10 +421,21 @@ class SessionStore:
                 titles += (name,)
         else:
             titles += (session_started_at(session_id).astimezone().strftime("%d %b %H:%M"),)
+        title = session_title(metadata)
+        if title is not None:
+            titles += (title,)
         lines, _ = read_transcript(path)
         texts = tuple(text.casefold() for text in (*titles, *(line.text for line in lines)))
         self._search_texts[session_id] = (key, texts)
         return texts
+
+    @staticmethod
+    def _metadata_mtime(directory: Path) -> int | None:
+        """Return the ``mtime_ns`` of ``session.json``: a new title changes only that file."""
+        try:
+            return (directory / "session.json").lstat().st_mtime_ns
+        except FileNotFoundError:
+            return None
 
     @staticmethod
     def _next_revision_name(directory: Path) -> str:

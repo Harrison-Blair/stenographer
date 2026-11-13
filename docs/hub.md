@@ -65,8 +65,8 @@ tiers by terminal width:
 | Tier | Columns | Changes |
 | --- | --- | --- |
 | Wide | 120 and more | Every value shows. |
-| Medium | 80 to 119 | The Checks list shows the check names only. |
-| Narrow | 60 to 79 | The top line shows only `●` or `Ⅱ` for a recording, no Library count, and the first word of the engine state. The Record speaker row is one line. Checks shows the list alone and only the counts on the tab line. |
+| Medium | 80 to 119 | The Library table drops the `kind`, `size`, and `state` columns and shows a state glyph. The Checks list shows the check names only. |
+| Narrow | 60 to 79 | The top line shows only `●` or `Ⅱ` for a recording, no Library count, and the first word of the engine state. The Record speaker row and the speaker row of an open Library session are one line. The Library table also drops `speakers`, and the open session shows no Play position. Checks shows the list alone and only the counts on the tab line. |
 
 The top of Record depends on the width and the height, so the transcript keeps
 its space in a short terminal:
@@ -319,62 +319,92 @@ network behavior.
 
 ## Library
 
-Library has a list of eight rows above the full-width detail of the selected
-entry. The list scrolls to keep the selected row in view. It holds saved recordings, file sessions, and file jobs that are
-not finished, newest first. Its columns are `date`, `dur`, `kind` (`rec` or
-`file`), `spk` (speaker count), and `labels`:
+Library is one table of saved recordings, file sessions, and file jobs that are
+not finished, newest first. Each entry is two lines tall. Press `enter` to open
+the selected entry on the full screen; press `escape` to return to the table
+with the same entry selected. The table scrolls to keep the selected entry in
+view.
 
-- **Recording:** `labels` is `live` for the speaker labels shown during the
-  recording, `relabeled` after a re-diarize or after a stop that labelled a
-  source again from its saved audio, a revision method such as `rename` or
-  `re-transcribe`, or `! interrupted` when the recording stopped without a
-  clean save.
-- **File session:** `labels` is the name of the source file. If the speaker pass
-  of the job failed or could not run, the detail above the transcript shows `live labels`
-  until a later revision, such as a rename or Re-transcribe.
-- **File job:** `dur` shows `queued` or the percent done, and `labels` shows the
-  source file name. A failed job shows `× failed`; press `delete` to remove its
-  row. When a job finishes, its row becomes the session row and stays
-  selected.
-- **Revision job:** a job that writes a new revision of a listed session shows
-  `queued` or its percent in the `dur` cell of that session row.
+The columns depend on the [size tier](#sizes):
 
-The list updates when a job ends and when a recording is saved, and it keeps
+- **Wide:** `date`, `dur`, `kind` (`rec` or `file`), `speakers`, `title`,
+  `size`, and `state`.
+- **Medium:** `date`, `dur`, `speakers`, `title`, and a state glyph.
+- **Narrow:** `date`, `dur`, `title`, and a state glyph.
+
+The `speakers` cell lists the speaker names, most talk time first, on up to two
+lines; `+N` counts the names that do not fit. The `title` cell wraps to the
+second line, and a longer title ends with `…`. A recording without a title shows
+`—`; in the narrow tier it shows its speaker names, dimmed. A file session or a
+file job without a title shows the name of its file.
+
+The `state` cell of the wide tier shows a word: the label state (`live`,
+`relabeled`, or a revision method such as `rename` or `re-transcribe`; a
+revision that a file job wrote also shows `re-transcribe`),
+`! interrupted` when the recording stopped without a clean save, `× failed` for
+a failed file job, or the work that changes the entry. A file job shows
+`transcribe`; a file job that writes a new revision of a listed session shows
+`re-transcribe` on that session row. Work that the Library starts on a session
+shows its name while it runs: `re-diarize`, `re-transcribe`, `rename`, `title`,
+or `delete`. The open session shows the same word. The medium and narrow tiers
+show only a glyph: `!` interrupted, `×` failed.
+
+Only file jobs, which [Transcribe a file](#transcribe-a-file) queues, show
+`queued` or their percent in the `dur` cell, and only they can be cancelled.
+This includes a file job on the `mic.flac`, `system.flac`, or `source.<ext>` of
+a listed session. `d`, `t`, a rename, a title, and a delete show no percent and
+cannot be cancelled. A failed file job shows `× failed`; press `delete` to
+remove its row. When a file job finishes, its row becomes the session row and
+stays selected.
+
+The table updates when a job ends and when a recording is saved, and it keeps
 the selected entry. The active recording does not appear until it is saved.
-The top edge of the list shows the entry count, the audio size, and the sessions
-folder; the top line shows the entry count.
+The line above the table shows the entry count and the audio size; the top line
+shows the entry count.
 
-Press `/` to search session IDs, start times, file names, and transcripts; the
-search ignores case and runs in the background. Recording times include the
-local date and time shown in the list and the UTC timestamp. A job row matches
-by its source file name. Press `escape` to clear the search.
+Press `/` to search titles, session IDs, start times, file names, and
+transcripts; the search ignores case and runs in the background. Recording
+times include the local date and time shown in the table and the UTC timestamp.
+A job row matches by its source file name. Press `escape` to clear the search.
 
-The detail shows the date, time, duration, and kind, the label state, each
-speaker's talk time, the microphone and system activity of a recording, and
-the transcript. Each action is a button that prints its key:
+The open session shows its state, date, duration, kind, and size, the title,
+each speaker's talk time, the action buttons, and the transcript. While a player
+runs, the Play button shows `■ Stop` and the position in the session, for
+example `■ Stop 00:04:12 / 00:30:00`; the narrow tier shows no position. Buttons
+that do not fit the width hide; their keys still act. The action keys act on
+the selected entry in the table and in the open session:
 
 | Key | Action |
 | --- | --- |
 | `n` | Open the [Transcribe a file](#transcribe-a-file) dialog. |
-| `up` / `down` | Select the previous or next entry. |
+| `enter` | Open the selected entry on the full screen. |
+| `escape` | Return to the table; in the table, clear the search. |
+| `up` / `down` | Select the previous or next entry; in an open session, scroll the transcript one line. |
 | `/` | Search titles and transcripts. |
-| `escape` | Clear the search. |
 | `p` | Play or stop the session audio with `pw-play`. A file session plays its source file. On another session, `p` stops the audio that plays and starts that session. A notice shows when the player exits with an error. |
+| `e` | Edit the title of the session. An empty title removes the title. |
 | `r` | Rename a speaker of the session. Speakers that share a name are one row, and all of them get the new name. |
 | `d` | Re-diarize the session. This also needs the speech model. A file session cannot: use Re-transcribe. A recording without separated speakers (no system lines, and mic lines recorded as `You`) cannot either. |
 | `t` | Re-transcribe the session. A source with speaker separation also gets its speakers again, so labels can change. |
 | `x` | Export the transcript. |
-| `delete` | Delete the session after confirmation. On a queued or running job, cancel it after confirmation. |
-| `pageup` / `pagedown`, `home` / `end` | Scroll the transcript. |
+| `delete` | Delete the session after confirmation; this also stops its audio when it plays. On a queued or running file job, cancel the job after confirmation. |
+| `pageup` / `pagedown`, `home` / `end` | Move the selection one page, or to the first or last entry; in an open session, scroll the transcript. |
+
+The title is stored in the `session.json` of the session as `title`, with
+`title_source` `user` for a title that you typed. Like the transcript, the title
+stays in the session folder; the hub does not write it to logs, history, or
+analytics. A session without a title loads as before.
 
 For delete and job cancellation confirmations, press `y` to confirm or `n`
 to keep the session or job. `q` and `ctrl+c` do not confirm these prompts.
 
-While a re-diarize, re-transcribe, rename, delete, or file job changes a
-session, that session is busy: its Rename, Re-diarize, Re-transcribe, and
-Delete buttons show `busy` and do nothing, and a second change shows the
-notice `session busy`. On a session row with a running revision job, `delete`
-cancels the job.
+While a re-diarize, re-transcribe, rename, title, delete, or file job changes a
+session, that session is busy: its Edit title, Rename, Re-diarize,
+Re-transcribe, and Delete buttons are dimmed, and their keys show the notice
+`session busy`. Play and Export still act. While a file job writes a new
+revision of the session, its Delete button is `Cancel job…` and `delete`
+cancels that file job. During `d`, `t`, a rename, a title, or a delete, the
+Delete button is dimmed and `delete` shows `session busy`.
 
 `x` opens the Export dialog. Press `tab` or click a format to choose `md`,
 `jsonl`, `srt`, or `txt`, and type the folder (default `~/Documents`). Press
@@ -424,7 +454,7 @@ files. Files that `soundfile` can read use that library. M4A and AAC files use
 the system `ffmpeg` executable; other files that `soundfile` cannot read also
 use `ffmpeg`. Stenographer does not bundle FFmpeg. Install it with your system
 package manager. The Checks tab reports when `ffmpeg` is missing; a job that
-needs it fails with `× needs ffmpeg` in the Library detail.
+needs it fails with `× needs ffmpeg` in the open entry of the Library.
 `stenographer transcribe FILE` decodes with the same code. Where `ffmpeg` is missing and the
 file needs it, the command prints `needs ffmpeg` and exits with status 69. A file that
 `soundfile` cannot read, such as a damaged WAV file, needs `ffmpeg` too, so without `ffmpeg`

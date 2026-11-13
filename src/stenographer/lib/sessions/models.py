@@ -22,6 +22,11 @@ class SessionSummary:
     label_state: str = "live"
     # A file job kept its tracker labels because its speaker pass failed.
     speaker_pass_failed: bool = False
+    # Speaker names, most talk time first.
+    speakers: tuple[str, ...] = ()
+    title: str | None = None
+    # ``model`` or ``user``; ``None`` when the session has no title.
+    title_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -29,7 +34,6 @@ class SessionDetail:
     summary: SessionSummary
     lines: tuple[TranscriptLine, ...]
     talk_time: dict[str, float]
-    activity: dict[str, tuple[float, ...]]
     revision: str
     diarize_mic: bool = False
     # A file session's speaker option; ``None`` for a session older than the record.

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Read session folders, transcript rows, audio metrics, and activity."""
+"""Read session folders, transcript rows, and audio metrics."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-import numpy as np
 import soundfile as sf
 
 from stenographer.lib.live.transcript_line import TranscriptLine
@@ -21,7 +20,7 @@ from stenographer.lib.sessions.persistence import DIARIZE_KEY, SPEAKER_PASS_FAIL
 _SESSION_ID = re.compile(r"(?P<start>\d{8}T\d{6}Z)(?:-\d+)?\Z")
 _REVISION = re.compile(r"transcript\.r(?P<number>[2-9]|[1-9]\d+)\.jsonl\Z")
 _SOURCE_FILE = re.compile(r"source\.[A-Za-z0-9]{1,8}\Z")
-_ACTIVITY_BINS = 64
+_TITLE_SOURCES = frozenset({"model", "user"})
 _AUDIO_SOURCES = ("mic", "system")
 _SOURCE_ORDER = {"mic": 0, "system": 1}
 
@@ -83,6 +82,14 @@ def session_metadata(directory: Path) -> dict:
     """Return the session.json object, or an empty one when it is absent or unreadable."""
     metadata, _ = _load_metadata(directory)
     return metadata or {}
+
+
+def session_title(metadata: dict) -> str | None:
+    """Return the title of ``session.json``, or ``None`` when it has none."""
+    title = metadata.get("title")
+    if not isinstance(title, str) or not title.strip():
+        return None
+    return title.strip()
 
 
 def source_file_path(directory: Path, metadata: dict) -> Path | None:
@@ -213,32 +220,7 @@ def _audio_info(path: Path) -> tuple[int, int] | None:
     return info.frames, info.samplerate
 
 
-def _activity(path: Path) -> tuple[float, ...]:
-    info = _audio_info(path)
-    if info is None:
-        return ()
-    frames, _ = info
-    if frames == 0:
-        return ()
-    boundaries = np.linspace(0, frames, _ACTIVITY_BINS + 1, dtype=np.int64)
-    levels: list[float] = []
-    try:
-        with sf.SoundFile(path) as audio:
-            for index in range(_ACTIVITY_BINS):
-                start, end = int(boundaries[index]), int(boundaries[index + 1])
-                if end == start:
-                    continue
-                audio.seek(start)
-                samples = audio.read(end - start, dtype="float32", always_2d=True)
-                if len(samples) != end - start:
-                    return ()
-                levels.append(float(np.sqrt(np.mean(np.square(samples), dtype=np.float64))))
-    except (OSError, RuntimeError, ValueError):
-        return ()
-    return tuple(levels)
-
-
-def read_session(directory: Path, session_id: str, *, with_activity: bool) -> SessionDetail:
+def read_session(directory: Path, session_id: str) -> SessionDetail:
     started_at = session_started_at(session_id)
     metadata, damaged = _load_metadata(directory)
     revision, transcript_path, interrupted = _revision_from_metadata(directory, metadata, damaged)
@@ -265,7 +247,6 @@ def read_session(directory: Path, session_id: str, *, with_activity: bool) -> Se
     source_ids = {line.source for line in lines}
     audio_sizes = 0
     durations: list[float] = []
-    activity: dict[str, tuple[float, ...]] = {}
     if kind == "file":
         source = source_file_path(directory, metadata)
         if source is None:
@@ -293,8 +274,6 @@ def read_session(directory: Path, session_id: str, *, with_activity: bool) -> Se
                 exists = None
             if source in source_ids or exists is not None:
                 interrupted = True
-            if with_activity:
-                activity[source] = ()
             continue
         frames, sample_rate = audio_info
         durations.append(frames / sample_rate)
@@ -302,20 +281,14 @@ def read_session(directory: Path, session_id: str, *, with_activity: bool) -> Se
             audio_sizes += audio_path.stat().st_size
         except OSError:
             interrupted = True
-        if with_activity:
-            activity[source] = _activity(audio_path)
-            if frames and not activity[source]:
-                interrupted = True
 
     duration = max([*durations, *(line.end for line in lines)], default=0.0)
-    if with_activity:
-        for source in _AUDIO_SOURCES:
-            activity.setdefault(source, ())
 
     talk_time: dict[str, float] = {}
     for line in lines:
         talk_time[line.label] = talk_time.get(line.label, 0.0) + line.end - line.start
     label_state = _label_state(revision, metadata)
+    title = session_title(metadata)
     summary = SessionSummary(
         session_id=session_id,
         started_at=started_at,
@@ -331,12 +304,18 @@ def read_session(directory: Path, session_id: str, *, with_activity: bool) -> Se
         ),
         label_state=label_state,
         speaker_pass_failed=kind == "file" and _speaker_pass_failed(label_state, metadata),
+        speakers=tuple(sorted(talk_time, key=lambda label: -talk_time[label])),
+        title=title,
+        title_source=(
+            metadata["title_source"]
+            if title is not None and metadata.get("title_source") in _TITLE_SOURCES
+            else None
+        ),
     )
     return SessionDetail(
         summary,
         lines,
         talk_time,
-        activity,
         revision,
         diarize_mic=metadata.get("diarize_mic") is True,
         diarize=(

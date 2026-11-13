@@ -7,6 +7,7 @@ import logging
 import os
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -41,6 +42,7 @@ class HubServices:
         files_engine_factory: Callable[..., FilesEngine] | None = None,
         device_query: Callable[[], list[tuple[str, str]]] | None = None,
         media_decoder: Callable[[Path], Generator[np.ndarray]] | None = None,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._config = config
         self._platform = platform
@@ -51,6 +53,10 @@ class HubServices:
         self._player: subprocess.Popen | None = None
         self._player_session_id: str | None = None
         self._player_temp_path: Path | None = None
+        # ``(session_id, start time)`` of the player that runs. It is replaced as a whole, so
+        # ``session_playback`` reads it without the lock that a play preparation holds.
+        self._playing: tuple[str, float] | None = None
+        self._clock = clock
         self._player_lock = threading.Lock()
         self._stopped_players: set[subprocess.Popen] = set()
         self._session: LiveSession | None = None
@@ -250,6 +256,11 @@ class HubServices:
             same_session = self._player_session_id == session_id
             if self._stop_player_locked() and same_session:
                 return
+            # A player that ended by itself and whose watcher has not run yet must not
+            # show as playing while the next play is prepared.
+            self._player = None
+            self._player_session_id = None
+            self._playing = None
             if self._player_temp_path is not None:
                 self._player_temp_path.unlink(missing_ok=True)
                 self._player_temp_path = None
@@ -262,6 +273,7 @@ class HubServices:
             self._player = process
             self._player_session_id = session_id
             self._player_temp_path = mixed_path
+            self._playing = (session_id, self._clock())
             log.info(
                 fmt_event("hub", "session_playback_started", session_id=session_id, pid=process.pid)
             )
@@ -272,9 +284,22 @@ class HubServices:
                 daemon=True,
             ).start()
 
-    def stop_session_playback(self) -> None:
+    def session_playback(self) -> tuple[str, float] | None:
+        """Return the session that plays and the seconds since its player started, or ``None``."""
+        playing = self._playing
+        if playing is None:
+            return None
+        return playing[0], self._clock() - playing[1]
+
+    def stop_session_playback(self, session_id: str | None = None) -> None:
+        """Stop the player; with ``session_id``, only when it plays that session.
+
+        The lock makes the call wait for a play preparation in progress, so a player
+        that starts for ``session_id`` during the call is stopped too.
+        """
         with self._player_lock:
-            self._stop_player_locked()
+            if session_id is None or self._player_session_id == session_id:
+                self._stop_player_locked()
 
     def _stop_player_locked(self) -> bool:
         """Terminate a running player; return whether one ran."""
@@ -293,6 +318,7 @@ class HubServices:
         )
         self._player = None
         self._player_session_id = None
+        self._playing = None
         return True
 
     def _watch_player(
@@ -318,6 +344,7 @@ class HubServices:
             if self._player is process:
                 self._player = None
                 self._player_session_id = None
+                self._playing = None
             if self._player_temp_path == mixed_path:
                 self._player_temp_path = None
             mixed_path.unlink(missing_ok=True)
