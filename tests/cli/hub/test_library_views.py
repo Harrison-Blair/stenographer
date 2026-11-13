@@ -15,6 +15,7 @@ from textual.widgets import Input, Static
 
 from stenographer.cli.hub.dialogs import QuitConfirm
 from stenographer.cli.hub.export_dialog import ExportDialog
+from stenographer.cli.hub.library_table import LibraryTable
 from stenographer.cli.hub.rename_dialog import RenameDialog
 from stenographer.cli.hub.services import HubServices
 from stenographer.cli.hub.session_titles import THREAD_NAME
@@ -51,12 +52,37 @@ async def _open(pilot, app, count: int) -> None:
     await _until(pilot, lambda: app.library_screen.detail is not None, "detail did not load")
     app.refresh_view()
     await pilot.pause()
+    await _table_drawn(pilot, app)
 
 
 async def _settle(pilot, app) -> None:
     app.refresh_view()
     await pilot.pause()
     await pilot.pause()
+    await _table_drawn(pilot, app)
+
+
+async def _table_drawn(pilot, app) -> None:
+    """Wait until the screen draws each table line that fits the list view.
+
+    New rows change the table height only in a later layout pass. ``region`` and the
+    compositor maps are no proof: Textual computes them on demand, before the screen
+    draws the new height. An open session hides the table.
+    """
+    if app.library_screen.opened:
+        return
+    table = app.library_screen.query_one("#library-list", LibraryTable)
+    scroll = app.library_screen.query_one("#library-list-scroll")
+
+    def drawn() -> bool:
+        # Before its first layout the view has no height, and no line fits it.
+        height = scroll.scrollable_content_region.height
+        top = round(scroll.scroll_y)
+        view = table.render().plain.splitlines()[top : top + height]
+        text = _screen_text(app)
+        return height > 0 and all(line.rstrip() in text for line in view)
+
+    await _until(pilot, drawn, "the screen did not draw the table lines that fit the list view")
 
 
 def _button(app, button_id: str) -> HubButton:
