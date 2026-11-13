@@ -208,6 +208,8 @@ class LibraryScreen(HubScreen):
         self._owner_ids = itertools.count(1)
         self._pending_select: str | None = None
         self._follow_select: str | None = None
+        # The entry of the finished file job whose session ``_follow_select`` names.
+        self._follow_job: str | None = None
         self._list_running = False
         self._list_again = False
         self._watch_key: object = None
@@ -882,10 +884,11 @@ class LibraryScreen(HubScreen):
             ]
         self.entries = tuple(entries)
         if self._follow_select is not None and self.entry(self._follow_select) is not None:
-            if self._transcript_entry == self._selected_id:
-                # The finished file job's session keeps the job's scroll position.
+            if self._transcript_entry == self._follow_job:
+                # The finished file job's session keeps the job's lines and scroll position.
                 self._transcript_entry = self._follow_select
             self._selected_id, self._follow_select = self._follow_select, None
+            self._follow_job = None
         if self.entry(self._selected_id or "") is None:
             self._selected_id = self.entries[0].entry_id if self.entries else None
             # The open session is gone, for example deleted: show the table.
@@ -980,6 +983,7 @@ class LibraryScreen(HubScreen):
             if self._selected_id == f"job:{job.id}":
                 # Select the session when a reload lists it.
                 self._follow_select = job.session_id
+                self._follow_job = f"job:{job.id}"
             self.app.services.titles.generate_auto(job.session_id)
             if target is not None and target[0] == self._detail_id:
                 self._detail_id = None

@@ -1109,7 +1109,7 @@ def _shows(app, text: str) -> bool:
 async def _open_entry(pilot, app, entry_id: str) -> None:
     screen = app.library_screen
     screen.select_entry(entry_id)
-    # The table loads the detail of the selected entry before enter, as it does for a user.
+    # One user path: the table has loaded the detail of the selected entry before enter.
     if screen.selected_entry.summary is not None:
         await _until(pilot, lambda: screen.detail is not None and screen._detail_id == entry_id)
     await pilot.press("enter")
@@ -1129,6 +1129,15 @@ async def test_a_saved_session_opens_at_its_first_line_and_so_does_the_next_one(
         assert _shows(app, "alpha000")
         assert not _shows(app, "alpha059")
         assert _layout_problems(app) == []
+
+        await pilot.press("down", "down", "down")
+        assert transcript.scroll_y == 3
+        await pilot.press("escape")
+        await _settle(pilot, app)
+        # The same session opens again at its first line.
+        await _open_entry(pilot, app, first)
+        assert _shows(app, "alpha000")
+        assert not _shows(app, "alpha059")
 
         await pilot.press("down", "down", "down")
         assert transcript.scroll_y == 3
@@ -1241,3 +1250,109 @@ async def test_a_file_job_that_finishes_while_open_keeps_the_scroll_position(tmp
         assert screen.opened
         assert transcript.scroll_y == position
         assert _layout_problems(app) == []
+
+
+class _Gate:
+    """Hold each call of a store method until the test opens the gate."""
+
+    def __init__(self, method):
+        self.method = method
+        self.open = threading.Event()
+        self.open.set()
+        self.waiting = threading.Event()
+
+    def __call__(self, *args):
+        self.waiting.set()
+        if not self.open.wait(timeout=5):
+            raise TimeoutError("test gate was not opened")
+        return self.method(*args)
+
+
+@SIZES
+async def test_enter_before_the_detail_loads_opens_at_the_first_line(tmp_path, size):
+    session = _write_long_rec(tmp_path, REC_LIVE, "alpha")
+    services = FakeServices(tmp_path / "sessions")
+    store = services.session_store
+    detail_gate = store.read = _Gate(store.read)
+    detail_gate.open.clear()
+    app = make_app(tmp_path, services)
+    screen = app.library_screen
+    try:
+        async with app.run_test(size=size) as pilot:
+            await pilot.press("2")
+            await _until(pilot, lambda: len(screen.entries) == 1)
+            await _until(pilot, detail_gate.waiting.is_set)
+            await pilot.press("enter")
+            await _settle(pilot, app)
+            assert screen.opened and screen.detail is None
+            assert _shows(app, "Loading…")
+
+            detail_gate.open.set()
+            await _until(pilot, lambda: screen.detail is not None and screen._detail_id == session)
+            await _settle(pilot, app)
+            assert _shows(app, "alpha000")
+            assert not _shows(app, "alpha059")
+            assert _layout_problems(app) == []
+    finally:
+        detail_gate.open.set()
+
+
+async def test_another_session_opened_before_a_finished_job_is_listed_shows_no_wrong_lines(
+    tmp_path,
+):
+    root = tmp_path / "sessions"
+    other = _write_long_rec(tmp_path, REC_LIVE, "bravo")
+    services = FakeServices(root)
+    store = services.session_store
+    source = tmp_path / "sources" / "sierra.wav"
+    job = FakeJob("file-1", source, percent=90)
+    job.progress = FileJobProgress("transcribe", 90, _long_lines("juliet"))
+    services.jobs.append(job)
+    app = make_app(tmp_path, services)
+    screen = app.library_screen
+    list_gate = detail_gate = None
+    try:
+        async with app.run_test(size=(120, 35)) as pilot:
+            await pilot.press("2")
+            await _until(pilot, lambda: len(screen.entries) == 2)
+            await _open_entry(pilot, app, "job:file-1")
+            assert _shows(app, "juliet059")
+
+            source.parent.mkdir(parents=True)
+            sf.write(source, np.zeros(16_000, dtype=np.float32), 16_000)
+            finished = store.create_file_session(
+                source, started_at=REC_LIVE, duration_seconds=60.0, lines=_long_lines("sierra")
+            )
+            list_gate = store.list_sessions = _Gate(store.list_sessions)
+            list_gate.open.clear()
+            job.session_id = finished
+            job.state = "completed"
+            # The list read that lists the finished session waits at the gate.
+            await _until(pilot, list_gate.waiting.is_set)
+
+            await pilot.press("escape")
+            await _settle(pilot, app)
+            await _open_entry(pilot, app, other)
+            assert _shows(app, "bravo000")
+
+            detail_gate = store.read = _Gate(store.read)
+            detail_gate.open.clear()
+            list_gate.open.set()
+            await _until(pilot, lambda: screen.selected_id == finished)
+            await _until(pilot, detail_gate.waiting.is_set)
+            await _settle(pilot, app)
+            # The head shows the finished session; no line of the other session shows under it.
+            assert "sierra.wav" in _line_of(app, "[e] Edit title…")
+            assert not _shows(app, "bravo")
+            assert _shows(app, "Loading…")
+
+            detail_gate.open.set()
+            await _until(pilot, lambda: screen.detail is not None and screen._detail_id == finished)
+            await _settle(pilot, app)
+            assert _shows(app, "sierra000")
+            assert not _shows(app, "sierra059")
+            assert _layout_problems(app) == []
+    finally:
+        for gate in (list_gate, detail_gate):
+            if gate is not None:
+                gate.open.set()
