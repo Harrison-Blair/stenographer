@@ -38,7 +38,7 @@ def test_defaults_match_spec():
     assert d.feedback.sound_pack == "minimal-ui"
     assert d.analytics == AnalyticsConfig(True)
     assert d.delivery == DeliveryConfig(True, True)
-    assert d.live == LiveConfig(False)
+    assert d.live == LiveConfig(diarize_mic=False, echo_filter=True)
 
 
 #: An ASR section as a Whisper-era release wrote it, with every removed key.
@@ -198,6 +198,7 @@ def test_empty_string_is_unset(tmp_path):
             {"copy_original": False, "restore_clipboard": False},
         ),
         ("[stenographer.live]\ndiarize_mic = true", "live", {"diarize_mic": True}),
+        ("[stenographer.live]\necho_filter = false", "live", {"echo_filter": False}),
     ],
 )
 def test_partial_overrides_preserve_other_defaults(toml_text, section, overrides):
@@ -238,6 +239,10 @@ def test_old_config_inherits_defaults_without_rewriting(tmp_path):
         *[
             (f"[stenographer.live]\n{line}", "live.diarize_mic")
             for line in ('diarize_mic = "yes"', "diarize_mic = 1")
+        ],
+        *[
+            (f"[stenographer.live]\n{line}", "live.echo_filter")
+            for line in ('echo_filter = "no"', "echo_filter = 0")
         ],
         ("[stenographer]\nlive = 1", "live"),
         ("[stenographer.asr]\nidle_unload_seconds = -1\n", "asr.idle_unload_seconds"),
@@ -291,6 +296,7 @@ def test_default_template_documents_the_live_section(tmp_path):
 
     assert "[stenographer.live]" in text
     assert "diarize_mic = false" in text
+    assert "echo_filter = true" in text
     assert Config.load(p).live == LiveConfig()
 
 

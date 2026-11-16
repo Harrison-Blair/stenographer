@@ -14,6 +14,7 @@ idle_unload_seconds = 900      # kill the idle worker child; 0 disables
 
 [stenographer.live]
 diarize_mic = false            # label room voices on the mic as Room 1, Room 2, ...; off = "You"
+echo_filter = true             # keep system audio from the speakers out of the mic transcript
 
 [stenographer.feedback]
 volume = 0.6

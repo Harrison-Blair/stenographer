@@ -8,6 +8,7 @@ import shutil
 import threading
 import time
 import tracemalloc
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -903,3 +904,153 @@ def test_rediarize_refuses_a_recording_with_no_separated_source(tmp_path):
         "transcript.md",
     ]
     assert diarizer.files == []
+
+
+class SampleWorker:
+    """Decode a phrase to its sample value, or to no text for the value in *silent*."""
+
+    def __init__(self, silent=None):
+        self.silent = silent
+        self.closed = False
+
+    def transcribe(self, samples):
+        value = round(float(samples[0]), 2)
+        return TranscriptionResult("" if value == self.silent else f"heard {value}", 0.8)
+
+    def shutdown(self):
+        self.closed = True
+
+
+def _cleaning_jobs(monkeypatch, tmp_path, store, *, echo_filter=True, diarizer=None, silent=None):
+    """Jobs whose microphone cleaning writes the value 0.5 in place of the saved 0.1."""
+    import stenographer.lib.sessions.jobs as jobs_module
+
+    cleaned = []
+
+    def clean_file(mic, system, out):
+        cleaned.append((mic, system, out))
+        frames = sf.info(mic).frames
+        sf.write(out, np.full(frames, 0.5, dtype=np.float32), 16_000, format="FLAC")
+
+    monkeypatch.setattr(jobs_module, "clean_file", clean_file)
+    defaults = Config.defaults()
+    config = replace(defaults, live=replace(defaults.live, echo_filter=echo_filter))
+    jobs = SessionJobs(
+        store,
+        config,
+        FakePlatform(tmp_path, diarizer),
+        worker_factory=lambda *_args, **_kwargs: SampleWorker(silent),
+    )
+    return jobs, cleaned
+
+
+def test_retranscribe_decodes_mic_lines_from_cleaned_audio_and_deletes_the_copy(
+    monkeypatch, tmp_path
+):
+    sessions_root = tmp_path / "sessions"
+    session = _write_session(sessions_root)
+    store = SessionStore(sessions_root)
+    saved_mic = (session / "mic.flac").read_bytes()
+    jobs, cleaned = _cleaning_jobs(monkeypatch, tmp_path, store)
+
+    jobs.retranscribe(session.name)
+
+    assert [(line.source, line.text) for line in store.read(session.name).lines] == [
+        ("system", "heard 0.1"),
+        ("mic", "heard 0.5"),
+    ]
+    [(mic, system, copy)] = cleaned
+    assert (mic, system) == (session / "mic.flac", session / "system.flac")
+    assert copy.parent != session
+    assert not copy.exists()
+    assert (session / "mic.flac").read_bytes() == saved_mic
+
+
+def test_retranscribe_drops_a_mic_line_that_has_no_text_in_the_cleaned_audio(monkeypatch, tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session = _write_session(sessions_root)
+    store = SessionStore(sessions_root)
+    jobs, _cleaned = _cleaning_jobs(monkeypatch, tmp_path, store, silent=0.5)
+
+    jobs.retranscribe(session.name)
+
+    assert [(line.source, line.text) for line in store.read(session.name).lines] == [
+        ("system", "heard 0.1")
+    ]
+
+
+def test_retranscribe_with_the_echo_filter_off_reads_the_saved_mic_audio(monkeypatch, tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session = _write_session(sessions_root)
+    store = SessionStore(sessions_root)
+    jobs, cleaned = _cleaning_jobs(monkeypatch, tmp_path, store, echo_filter=False)
+
+    jobs.retranscribe(session.name)
+
+    assert cleaned == []
+    assert [(line.source, line.text) for line in store.read(session.name).lines] == [
+        ("system", "heard 0.1"),
+        ("mic", "heard 0.1"),
+    ]
+
+
+def test_retranscribe_does_not_clean_a_session_without_system_audio(monkeypatch, tmp_path):
+    sessions_root = tmp_path / "sessions"
+    writer = SessionWriter.open(tmp_path, datetime(2026, 10, 20, 1, 12, 18, tzinfo=UTC))
+    writer.write_audio("mic", np.full(32_000, 0.1, dtype=np.float32))
+    writer.append_line(TranscriptLine(0.8, 1.6, "", "mic", "you", "You", "fixture line"))
+    writer.close()
+    store = SessionStore(sessions_root)
+    jobs, cleaned = _cleaning_jobs(monkeypatch, tmp_path, store)
+
+    jobs.retranscribe(writer.path.name)
+
+    assert cleaned == []
+    assert [line.text for line in store.read(writer.path.name).lines] == ["heard 0.1"]
+
+
+def test_rediarize_finds_room_speakers_in_cleaned_audio_and_deletes_the_copy(monkeypatch, tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session = _write_room_session(sessions_root, diarized=True)
+    store = SessionStore(sessions_root)
+    diarizer = FakeDiarizer((SpeakerSegment(0, 0.0, 3.0), SpeakerSegment(1, 3.0, 12.0)))
+    jobs, cleaned = _cleaning_jobs(monkeypatch, tmp_path, store, diarizer=diarizer)
+
+    jobs.rediarize(session.name)
+
+    [(_mic, _system, copy)] = cleaned
+    assert diarizer.files == [session / "system.flac", copy]
+    assert not copy.exists()
+    # The line that speaker 2 cuts at 3 s is decoded again, from the cleaned audio.
+    assert [(line.source, line.label, line.text) for line in store.read(session.name).lines] == [
+        ("system", "Speaker 1", "fixture line"),
+        ("mic", "Room 1", "heard 0.5"),
+        ("mic", "Room 2", "heard 0.5"),
+        ("mic", "Room 2", "fixture line"),
+        ("mic", "Room 2", "fixture line"),
+    ]
+
+
+def test_rediarize_does_not_clean_when_mic_lines_have_no_speaker_separation(monkeypatch, tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session = _write_room_session(sessions_root, diarized=False)
+    store = SessionStore(sessions_root)
+    jobs, cleaned = _cleaning_jobs(monkeypatch, tmp_path, store)
+
+    jobs.rediarize(session.name)
+
+    assert cleaned == []
+
+
+def test_a_job_deletes_the_cleaned_copy_when_it_fails(monkeypatch, tmp_path):
+    sessions_root = tmp_path / "sessions"
+    session = _write_room_session(sessions_root, diarized=True)
+    store = SessionStore(sessions_root)
+    diarizer = FakeDiarizer(error=SpeakerDiarizerError("helper ended"))
+    jobs, cleaned = _cleaning_jobs(monkeypatch, tmp_path, store, diarizer=diarizer)
+
+    with pytest.raises(SpeakerDiarizerError):
+        jobs.rediarize(session.name)
+
+    [(_mic, _system, copy)] = cleaned
+    assert not copy.exists()

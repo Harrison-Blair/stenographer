@@ -153,10 +153,10 @@ def test_hub_services_do_not_create_a_session_until_recording_starts(tmp_path):
     # Refine off: a saved session then asks for no title.
     refine = SimpleNamespace(enabled=False)
     initial_config = SimpleNamespace(
-        asr=object(), live=SimpleNamespace(diarize_mic=False), refine=refine
+        asr=object(), live=SimpleNamespace(diarize_mic=False, echo_filter=False), refine=refine
     )
     next_config = SimpleNamespace(
-        asr=object(), live=SimpleNamespace(diarize_mic=False), refine=refine
+        asr=object(), live=SimpleNamespace(diarize_mic=False, echo_filter=False), refine=refine
     )
     services = HubServices(initial_config, platform, session_factory=Session)
 

@@ -276,6 +276,7 @@ async def test_settings_letters_go_to_a_focused_text_input(tmp_path):
         ("feedback.spectrum_floor_dbfs", "Meter floor dBFS"),
         ("refine.model", "Model"),
         ("live.diarize_mic", "Separate room speakers"),
+        ("live.echo_filter", "Echo filter"),
     ],
 )
 async def test_settings_open_setting_selects_the_row(tmp_path, key, label):

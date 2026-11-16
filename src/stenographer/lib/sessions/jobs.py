@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
@@ -17,6 +17,7 @@ import soundfile as sf
 
 from stenographer.lib.audio.constants import SAMPLE_RATE
 from stenographer.lib.files.media import decode_media
+from stenographer.lib.live.echo_filter import clean_file
 from stenographer.lib.live.speaker_lines import SpeakerNames, read_saved_audio, relabel_lines
 from stenographer.lib.live.transcript_line import TranscriptLine
 from stenographer.lib.logging.pipeline import log_failure
@@ -75,16 +76,19 @@ class SessionJobs:
         if refusal is not None:
             raise ValueError(refusal)
         sources = self._separated_sources(detail)
-        diarizer = self._open_diarizer(required=True)
-        try:
-            found = self._speaker_segments(session_id, detail, sources, diarizer)
-        finally:
-            diarizer.close()
-        worker = self._make_worker()
-        try:
-            lines = self._relabel_sources(session_id, detail, found, worker)
-        finally:
-            worker.shutdown()
+        with self._cleaned_mic(session_id, detail, wanted="mic" in sources) as mic_audio:
+            diarizer = self._open_diarizer(required=True)
+            try:
+                found = self._speaker_segments(session_id, detail, sources, diarizer, mic_audio)
+            finally:
+                diarizer.close()
+            worker = self._make_worker()
+            try:
+                lines = self._relabel_sources(
+                    session_id, detail, found, worker, mic_audio=mic_audio
+                )
+            finally:
+                worker.shutdown()
         return self._store.write_revision(
             session_id, lines, method="diarization", expected_revision=detail.revision
         )
@@ -94,11 +98,25 @@ class SessionJobs:
         the line rule. Without speaker separation, lines keep their speakers."""
         detail = self._store.read(session_id)
         sources = self._separated_sources(detail)
+        has_mic_lines = any(line.source == "mic" for line in detail.lines)
+        with self._cleaned_mic(session_id, detail, wanted=has_mic_lines) as mic_audio:
+            lines = self._retranscribed_lines(session_id, detail, sources, mic_audio)
+        return self._store.write_revision(
+            session_id, lines, method="re-transcribe", expected_revision=detail.revision
+        )
+
+    def _retranscribed_lines(
+        self,
+        session_id: str,
+        detail: SessionDetail,
+        sources: tuple[str, ...],
+        mic_audio: Path | None,
+    ) -> list[TranscriptLine]:
         found: dict[str, tuple[SpeakerSegment, ...]] = {}
         diarizer = self._open_diarizer(required=False) if sources else None
         if diarizer is not None:
             try:
-                found = self._speaker_segments(session_id, detail, sources, diarizer)
+                found = self._speaker_segments(session_id, detail, sources, diarizer, mic_audio)
             except SpeakerDiarizerError as exc:
                 # The text is still decoded again; the lines keep their speakers.
                 log_failure(log, logging.WARNING, "sessions: speakers_failed", exc, safe=True)
@@ -110,7 +128,7 @@ class SessionJobs:
         try:
             if detail.summary.kind != "file":
                 segments = (
-                    (index, self._audio_segment(session_id, line))
+                    (index, self._audio_segment(session_id, line, mic_audio))
                     for index, line in enumerate(lines)
                     if line.end > line.start and line.source not in found
                 )
@@ -123,14 +141,54 @@ class SessionJobs:
                 lines[index] = replace(lines[index], text=worker.transcribe(samples).text)
             if found:
                 detail = replace(detail, lines=tuple(lines))
-                lines = self._relabel_sources(session_id, detail, found, worker, decode_all=True)
+                lines = self._relabel_sources(
+                    session_id, detail, found, worker, decode_all=True, mic_audio=mic_audio
+                )
         finally:
             worker.shutdown()
             if chunks is not None:
                 chunks.close()
-        return self._store.write_revision(
-            session_id, lines, method="re-transcribe", expected_revision=detail.revision
-        )
+        if mic_audio is not None:
+            # A microphone line that was only echo has no text in the cleaned audio.
+            lines = [line for line in lines if line.text or line.source != "mic"]
+        return lines
+
+    @contextmanager
+    def _cleaned_mic(
+        self, session_id: str, detail: SessionDetail, *, wanted: bool
+    ) -> Iterator[Path | None]:
+        """Yield a private temporary copy of the microphone audio without the echo of the
+        system audio, or ``None`` when the job reads the saved file.
+
+        The copy exists when *wanted* (the job reads the microphone audio), the echo
+        filter is on, and the recorded session has both audio files. It is deleted at
+        the end.
+        """
+        mic = self._audio_path(session_id, "mic")
+        system = self._audio_path(session_id, "system")
+        if not (
+            wanted
+            and self._config.live.echo_filter
+            and detail.summary.kind != "file"
+            and mic.is_file()
+            and system.is_file()
+        ):
+            yield None
+            return
+        fd, name = tempfile.mkstemp(prefix="stenographer-session-", suffix=".flac")
+        os.close(fd)
+        cleaned = Path(name)
+        try:
+            clean_file(mic, system, cleaned)
+            yield cleaned
+        finally:
+            cleaned.unlink(missing_ok=True)
+
+    def _audio_path(self, session_id: str, source: str, mic_audio: Path | None = None) -> Path:
+        """Return the audio file of *source*; *mic_audio* replaces the saved microphone file."""
+        if source == "mic" and mic_audio is not None:
+            return mic_audio
+        return self._store.root / session_id / f"{source}.flac"
 
     @staticmethod
     def _separated_sources(detail: SessionDetail) -> tuple[str, ...]:
@@ -173,6 +231,7 @@ class SessionJobs:
         detail: SessionDetail,
         sources: tuple[str, ...],
         diarizer: SpeakerDiarizer,
+        mic_audio: Path | None = None,
     ) -> dict[str, tuple[SpeakerSegment, ...]]:
         """Return the speaker segments of each source, from its saved audio."""
         found = {}
@@ -185,7 +244,7 @@ class SessionJobs:
                     chunks.close()
             else:
                 found[source] = diarizer.diarize_file(
-                    self._store.root / session_id / f"{source}.flac"
+                    self._audio_path(session_id, source, mic_audio)
                 )
         return found
 
@@ -197,6 +256,7 @@ class SessionJobs:
         worker: Worker,
         *,
         decode_all: bool = False,
+        mic_audio: Path | None = None,
     ) -> list[TranscriptLine]:
         """Return the session lines with each source of *found* labelled by the line
         rule, in time order."""
@@ -209,7 +269,7 @@ class SessionJobs:
                 reader = ForwardReader(chunks)
                 read = reader.read
             else:
-                read = partial(read_saved_audio, self._store.root / session_id / f"{source}.flac")
+                read = partial(read_saved_audio, self._audio_path(session_id, source, mic_audio))
             try:
                 relabeled = relabel_lines(
                     own,
@@ -238,10 +298,12 @@ class SessionJobs:
             return self._media_decoder(path)
         return decode_media(path, self._platform.ffmpeg_decoder())
 
-    def _audio_segment(self, session_id: str, line: TranscriptLine) -> np.ndarray:
+    def _audio_segment(
+        self, session_id: str, line: TranscriptLine, mic_audio: Path | None = None
+    ) -> np.ndarray:
         if line.source not in {"mic", "system"}:
             raise ValueError(f"unsupported audio source: {line.source}")
-        path = self._store.root / session_id / f"{line.source}.flac"
+        path = self._audio_path(session_id, line.source, mic_audio)
         return read_saved_audio(path, line.start, line.end)
 
     def write_play_audio(self, session_id: str) -> Path:

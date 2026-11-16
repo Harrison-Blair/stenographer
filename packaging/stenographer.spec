@@ -44,6 +44,7 @@ ASSET_DATAS = [
 ]
 TEXTUAL_DATAS, TEXTUAL_BINARIES, TEXTUAL_IMPORTS = collect_all("textual")
 SHERPA_DATAS, SHERPA_BINARIES, SHERPA_IMPORTS = collect_all("sherpa_onnx")
+WEBRTC_DATAS, WEBRTC_BINARIES, WEBRTC_IMPORTS = collect_all("pywebrtc_audio")
 NATIVE_BINARIES = []
 NATIVE_IMPORTS = []
 if sys.platform == "linux":
@@ -62,18 +63,20 @@ a = Analysis(
     pathex=[str(PROJECT_ROOT / "src")],
     # Explicit collection keeps the completed PyWayland CFFI build and lets
     # PyInstaller trace its libwayland/libffi shared-library dependencies.
-    binaries=[*NATIVE_BINARIES, *TEXTUAL_BINARIES, *SHERPA_BINARIES],
+    binaries=[*NATIVE_BINARIES, *TEXTUAL_BINARIES, *SHERPA_BINARIES, *WEBRTC_BINARIES],
     datas=[
         # Sound cues, the overlay quill, Caveat variable font and OFL, and the
         # Bark Pro converter script and its venv lock (assets/convert/).
         *ASSET_DATAS,
         *TEXTUAL_DATAS,
         *SHERPA_DATAS,
+        *WEBRTC_DATAS,
     ],
     hiddenimports=[
         *NATIVE_IMPORTS,
         *TEXTUAL_IMPORTS,
         *SHERPA_IMPORTS,
+        *WEBRTC_IMPORTS,
         # Heavy imports are deferred into subcommand handlers, so static
         # analysis from entry.py alone would miss most of the package.
         *collect_submodules("stenographer"),

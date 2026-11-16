@@ -257,8 +257,8 @@ toggle for it. With the setting off, microphone lines are `You`.
 Limits:
 
 - Room labels are estimates. They can split one person or merge several people.
-- System audio that leaks into the microphone can appear as a room speaker. Use
-  headphones to avoid this.
+- System audio from the speakers can appear as a room speaker when the
+  [echo filter](#echo-filter) does not remove all of it. Headphones prevent this.
 
 ### System capture limits
 
@@ -267,13 +267,35 @@ does not capture separate applications. It requires PipeWire, `pw-record`, and
 `pactl`. A recording does not follow a change to the default output sink. If
 you do not need system audio, press `s` to turn it off.
 
-Echo cancellation is out of scope. System audio can also reach the microphone
-and appear twice. Use headphones, or press `m` to turn off the microphone.
-
 Each phrase is decoded on the CPU. Microphone and system phrases share one
 processing queue, so a backlog can delay lines. Running `stenographer run` and
 the hub together is supported. Each loads its own copy of the speech model,
 and both can compete for CPU time.
+
+### Echo filter
+
+System audio that plays on speakers also reaches the microphone. Without a
+filter, the transcript has those words twice: in a system line and in a
+microphone line. The echo filter removes the system audio from the microphone
+audio before the voice detector, the speaker labels, and speech recognition.
+Set `live.echo_filter` (default `true`) with the Echo filter row of Settings. The
+setting applies when a recording starts.
+
+- The saved `mic.flac` holds the microphone audio as recorded. The filter changes
+  only the audio that the transcript comes from.
+- The filter works while the microphone and system audio are both on.
+- The filter is the WebRTC echo canceller. It runs on the CPU, offline.
+- [Re-diarize and Re-transcribe](#library) also use it; see Library.
+
+Limits:
+
+- Some copied words can stay. Speech at the same time as loud system audio can
+  lose words.
+- A microphone that clips (a level at full scale) gets worse results: speech can
+  lose words. Decrease the capture gain of the microphone, or turn the filter off.
+- With headphones there is no echo to remove. Turn the filter off to save CPU time.
+- The filter does not remove your voice from system audio, for example a call
+  that plays your own voice back.
 
 ### Speaker labels
 
@@ -464,6 +486,19 @@ other sessions, including older ones, it labels system lines only and
 microphone lines stay `You`. A new speaker keeps the name you gave to most of
 its time. Saved sessions keep their labels until you press `d` or `t`.
 
+With `live.echo_filter` on, both jobs read the microphone audio through the
+[echo filter](#echo-filter) when the session has microphone and system audio.
+They clean a temporary copy and delete it at the end; `mic.flac` does not
+change. A microphone line with no text in the cleaned audio is not in the new
+Re-transcribe revision. Thus Re-transcribe removes copied lines from a session
+that was recorded without the filter.
+
+Re-transcribe reads the lines of the current revision. A line that it removed
+does not come back when you run it again with the setting off. The earlier
+revision file stays in the session folder. To use it again, set
+`current_revision` in `session.json` to its name, for example
+`transcript.jsonl`.
+
 Re-diarize fails when speaker labels cannot run on this computer; Re-transcribe
 then keeps the speakers and replaces only the text. A file imported without
 Separate speakers keeps its one speaker. A file imported before this record
@@ -542,7 +577,7 @@ page that edits `config.toml` in six groups:
 | Audio | Microphone, Volume, Sound pack, Overlay |
 | Text | Vocabulary, Copy original, Restore clipboard |
 | Refine | Refine, Host, Model |
-| Recording | Separate room speakers, Meter floor dBFS |
+| Recording | Separate room speakers, Echo filter, Meter floor dBFS |
 | System | Usage history, Idle unload |
 
 A terminal of 120 columns or more shows the groups in two columns. A narrower
@@ -631,6 +666,7 @@ its current settings.
 | Host | `refine.host` | The Ollama server of refine and of titles. A host that is not loopback receives transcript text. |
 | Model | `refine.model` | The model name on the refine service. |
 | Separate room speakers | `live.diarize_mic` | Separates the speakers on the microphone as Room 1, Room 2, and so on. Off labels every microphone line You. It applies to new Record recordings. |
+| Echo filter | `live.echo_filter` | Removes system audio that the speakers play from the microphone transcript. It applies to new Record recordings and to Re-diarize and Re-transcribe. See [Echo filter](#echo-filter). |
 
 ### Checks
 

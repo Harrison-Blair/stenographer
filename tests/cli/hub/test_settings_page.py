@@ -17,7 +17,7 @@ PAGE = (
     ("AUDIO", ("Microphone", "Volume", "Sound pack", "Overlay")),
     ("TEXT", ("Vocabulary", "Copy original", "Restore clipboard")),
     ("REFINE", ("Refine", "Host", "Model")),
-    ("RECORDING", ("Separate room speakers", "Meter floor dBFS")),
+    ("RECORDING", ("Separate room speakers", "Echo filter", "Meter floor dBFS")),
     ("SYSTEM", ("Usage history", "Idle unload")),
 )
 SIZES = [(150, 45), (120, 35), (100, 30), (80, 24), (60, 16)]

@@ -18,6 +18,7 @@ _LABELS = {
     "audio.input_device": "Microphone",
     "asr.idle_unload_seconds": "Idle unload",
     "live.diarize_mic": "Separate room speakers",
+    "live.echo_filter": "Echo filter",
     "refine.enabled": "Refine",
     "refine.host": "Host",
     "refine.model": "Model",
