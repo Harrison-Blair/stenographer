@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from stenographer.lib.audio.device_setting import capture_target
+from stenographer.lib.live.echo_filter import EchoFilter
 from stenographer.lib.live.models import vad_model_path
 from stenographer.lib.live.phrase_segmenter import Phrase, PhraseSegmenter
 from stenographer.lib.live.session_writer import SessionWriter
@@ -75,6 +76,7 @@ class LiveSession:
         system: bool = True,
         device: str | int | None = None,
         diarize_mic: bool = False,
+        echo_filter: bool = False,
         platform: Platform | None = None,
         monotonic: Callable[[], float] | None = None,
     ) -> None:
@@ -91,6 +93,8 @@ class LiveSession:
         self._worker = Worker(cfg.asr, transport=self._platform.asr_transport())
         # System speakers are always separated; mic speakers only with diarize_mic.
         self._separated = {"mic": diarize_mic, "system": True}
+        # Removes the system audio that the microphone hears, for the transcript only.
+        self._echo = EchoFilter() if echo_filter else None
         self._diarizer = self._platform.speaker_diarizer()
         self._speaker_issue = self._diarizer.unavailable_reason()
         if self._speaker_issue is not None:
@@ -173,6 +177,7 @@ class LiveSession:
             )
             self._watch_thread.start()
             self._started = True
+            log.info(fmt_event("live", "echo_filter", state="off" if self._echo is None else "on"))
             for source in ("mic", "system"):
                 if self._enabled[source]:
                     self._start_source(source)
@@ -427,6 +432,15 @@ class LiveSession:
             self._worker.release_model()
             self._worker.shutdown()
             self._diarizer.close()
+        if self._echo is not None:
+            log.info(
+                fmt_event(
+                    "live",
+                    "echo_filter_stopped",
+                    cleaned_seconds=round(self._echo.cleaned_samples / _SAMPLE_RATE, 3),
+                    raw_seconds=round(self._echo.raw_samples / _SAMPLE_RATE, 3),
+                )
+            )
         log.info(fmt_event("live", "stopped", duration_seconds=round(duration, 3)))
 
     def _finish_streams(self) -> None:
@@ -522,6 +536,9 @@ class LiveSession:
                 self._clocks[source].start_run(
                     self._pushed_seconds[source], self._segment_offsets[source]
                 )
+                if self._echo is not None:
+                    # The position of the next sample in the saved file of the source.
+                    self._echo.start(source, self._source_samples[source])
                 self._active[source] = True
                 # Watched before the capture starts: a failure that the reader
                 # reports before start returns takes the source out again.
@@ -538,6 +555,7 @@ class LiveSession:
                 log.info(fmt_event("live", "source_started", source=source))
         except Exception as exc:
             with self._lock:
+                self._release_held_mic(source)
                 if self._enabled[source]:
                     self._failed.add(source)
                 self._active[source] = False
@@ -578,6 +596,7 @@ class LiveSession:
             except Exception as exc:
                 log_failure(log, logging.WARNING, "live: system_stop_failed", exc, safe=True)
         with self._lock:
+            self._release_held_mic(source)
             self._active[source] = False
             self._speech[source] = False
             self._watch.stopped(source)
@@ -603,6 +622,7 @@ class LiveSession:
 
     def _source_failed(self, source: str, error: Exception) -> None:
         with self._lock:
+            self._release_held_mic(source)
             # A failure of a source that the user already turned off is dropped.
             if self._enabled[source]:
                 self._failed.add(source)
@@ -649,20 +669,20 @@ class LiveSession:
             with self._lock:
                 if not self._active[source] or self._paused or self._stopped:
                     return
-                segmenter = self._segmenters[source]
                 self._source_seen[source] = True
                 self._watch.block(source, self._monotonic())
                 self._write_audio(source, samples)
                 rms = float(np.sqrt(np.mean(np.square(samples)))) if samples.size else 0.0
                 self._levels[source] = 20 * math.log10(rms) if rms > 0 else float("-inf")
-                phrases = segmenter.accept(samples)
-                self._speech[source] = segmenter.speech_detected
-                offset = self._segment_offsets[source]
-                stream = self._streams.get(source)
-                if stream is not None and samples.size:
-                    stream.push(samples)
-                    self._pushed_seconds[source] += samples.size / _SAMPLE_RATE
-                self._enqueue_phrases(phrases, offset)
+                if self._echo is None:
+                    self._detect(source, samples)
+                elif source == "system":
+                    self._detect("system", samples)
+                    for cleaned in self._echo.system(samples):
+                        self._detect("mic", cleaned)
+                else:
+                    for cleaned in self._echo.mic(samples):
+                        self._detect("mic", cleaned)
             for each in ("mic", "system"):
                 self._release_phrases(each)
             self._offer_block(source, samples)
@@ -670,6 +690,25 @@ class LiveSession:
             log_failure(
                 log, logging.WARNING, "live: audio_block_failed", exc, safe=True, source=source
             )
+
+    def _detect(self, source: str, samples: np.ndarray) -> None:
+        """Give *samples* to the voice detector and the speaker stream of *source*."""
+        segmenter = self._segmenters[source]
+        phrases = segmenter.accept(samples)
+        self._speech[source] = segmenter.speech_detected
+        stream = self._streams.get(source)
+        if stream is not None and samples.size:
+            stream.push(samples)
+            self._pushed_seconds[source] += samples.size / _SAMPLE_RATE
+        self._enqueue_phrases(phrases, self._segment_offsets[source])
+
+    def _release_held_mic(self, source: str) -> None:
+        """A run of *source* ends: send the microphone audio that waits for system
+        samples to the voice detector, not cleaned."""
+        if self._echo is None:
+            return
+        for samples in self._echo.stop(source):
+            self._detect("mic", samples)
 
     def _offer_block(self, source: str, samples: np.ndarray) -> None:
         with self._block_listener_lock:

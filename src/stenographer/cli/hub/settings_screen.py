@@ -45,7 +45,7 @@ SETTINGS_GROUPS = (
     ),
     ("Text", ("refine.vocabulary", "delivery.copy_original", "delivery.restore_clipboard")),
     ("Refine", ("refine.enabled", "refine.host", "refine.model")),
-    ("Recording", ("live.diarize_mic", "feedback.spectrum_floor_dbfs")),
+    ("Recording", ("live.diarize_mic", "live.echo_filter", "feedback.spectrum_floor_dbfs")),
     ("System", ("analytics.enabled", "asr.idle_unload_seconds")),
 )
 SETTINGS_KEYS = tuple(key for _group, keys in SETTINGS_GROUPS for key in keys)

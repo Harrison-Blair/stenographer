@@ -176,6 +176,7 @@ class HubServices:
         session = self._session_factory(
             self._config,
             diarize_mic=self._config.live.diarize_mic,
+            echo_filter=self._config.live.echo_filter,
             platform=self._platform,
             mic=self.next_sources["mic"],
             system=self.next_sources["system"],

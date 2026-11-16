@@ -679,6 +679,7 @@ def test_record_services_choose_sources_and_device_for_this_run_only(tmp_path):
     services.start_recording()
     assert created[0].options == {
         "diarize_mic": False,
+        "echo_filter": True,
         "platform": services._platform,
         "mic": True,
         "system": False,

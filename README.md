@@ -187,6 +187,8 @@ Agent, General, and cancel chords may not be equal or subsets of one another.
   On Record, press `space` to start and `enter` to stop and save; the session
   keeps the speaker labels shown live. A line ends at a pause or where the
   speaker changes, in Record, file jobs, Re-diarize, and Re-transcribe.
+  The echo filter (`live.echo_filter`, default on) keeps system audio that the
+  speakers play out of the microphone transcript.
   `o` opens the saved session in
   Library. Use `v` for mixed or split transcripts, `m` or `s` to toggle audio
   sources, and `d` to choose the input device for this run. Scroll with `up`/`down`,

@@ -81,9 +81,14 @@ class DeliveryConfig:
 
 @dataclass(frozen=True)
 class LiveConfig:
-    """Live-session options; mic diarization separates the speakers in one room."""
+    """Live-session options; mic diarization separates the speakers in one room.
+
+    The echo filter removes the system audio that the microphone hears from the
+    microphone transcript.
+    """
 
     diarize_mic: bool = False
+    echo_filter: bool = True
 
 
 @dataclass(frozen=True)
@@ -418,7 +423,7 @@ def _build_analytics(table: dict, path: pathlib.Path) -> AnalyticsConfig:
 
 def _build_live(table: dict, path: pathlib.Path) -> LiveConfig:
     r = _Reader(table, path, "live")
-    return LiveConfig(diarize_mic=r.bool("diarize_mic"))
+    return LiveConfig(diarize_mic=r.bool("diarize_mic"), echo_filter=r.bool("echo_filter"))
 
 
 def _build_delivery(table: dict, path: pathlib.Path) -> DeliveryConfig:

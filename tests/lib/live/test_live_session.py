@@ -1016,3 +1016,139 @@ def test_a_helper_process_that_cannot_start_keeps_the_recording(monkeypatch, tmp
     assert [line.label for line in rig.session.lines] == ["System", "System"]
     rig.session.stop()
     diarizer.close()
+
+
+class FakeEchoFilter:
+    """An echo filter with one rule: a mic block waits for the next system block, and
+    its cleaned form is the mic block minus that system block."""
+
+    def __init__(self):
+        self.starts = []
+        self.system_runs = False
+        self.held = []
+        self.cleaned_samples = RATE
+        self.raw_samples = RATE // 2
+
+    def start(self, source, position):
+        self.starts.append((source, position))
+        if source == "system":
+            self.system_runs = True
+
+    def stop(self, source):
+        if source == "system":
+            self.system_runs = False
+        released, self.held = self.held, []
+        return released
+
+    def mic(self, samples):
+        if not self.system_runs:
+            return [samples]
+        self.held.append(samples)
+        return []
+
+    def system(self, samples):
+        waiting, self.held = self.held, []
+        return [mic - samples for mic in waiting]
+
+
+def _make_echo_session(monkeypatch, tmp_path, **options):
+    import stenographer.lib.live.live_session as live_session
+
+    echo = FakeEchoFilter()
+    monkeypatch.setattr(live_session, "EchoFilter", lambda: echo)
+    rig = _make_session(monkeypatch, tmp_path, echo_filter=True, **options)
+    return rig, echo
+
+
+def test_echo_filter_cleans_a_mic_block_before_the_voice_detector(monkeypatch, tmp_path):
+    rig, _echo = _make_echo_session(monkeypatch, tmp_path)
+
+    rig.recorder.emit(3)
+    rig.session._queue.join()
+    # The mic block waits for its system samples: no phrase yet.
+    assert rig.worker.calls == []
+    rig.system.emit(2)
+    rig.session.stop()
+
+    # The voice detector of the mic heard 3 - 2 = 1; the system detector heard 2.
+    assert sorted(rig.worker.calls) == [1, 2]
+    assert {line.source: line.text for line in rig.writer.lines} == {
+        "mic": "spoken words",
+        "system": "quiet music words",
+    }
+    # The saved audio is the audio of each capture, not cleaned.
+    assert [(source, samples.tolist()) for source, samples in rig.writer.audio] == [
+        ("mic", [3.0]),
+        ("system", [2.0]),
+    ]
+
+
+def test_echo_filter_gets_the_file_position_of_each_run(monkeypatch, tmp_path):
+    clock = FakeClock()
+    rig, echo = _make_echo_session(monkeypatch, tmp_path, clock=clock)
+    rig.recorder.emit(1)
+    clock.now = 2.0
+    rig.session.pause()
+    rig.session.resume()
+    rig.session.stop()
+
+    # The pause padded each file to 2 s; the next run of a source starts there.
+    assert echo.starts == [("mic", 0), ("system", 0), ("mic", 2 * RATE), ("system", 2 * RATE)]
+
+
+def test_without_the_echo_filter_no_filter_is_made(monkeypatch, tmp_path):
+    import stenographer.lib.live.live_session as live_session
+
+    def refuse():
+        raise AssertionError("an echo filter was made")
+
+    monkeypatch.setattr(live_session, "EchoFilter", refuse)
+    rig = _make_session(monkeypatch, tmp_path)
+    rig.recorder.emit(1)
+    rig.session.stop()
+
+    assert rig.worker.calls == [1]
+
+
+@pytest.mark.parametrize("end", ["stop", "pause", "mic off", "system off", "system failed"])
+def test_a_waiting_mic_block_goes_to_the_voice_detector_when_a_run_ends(monkeypatch, tmp_path, end):
+    from stenographer.lib.platform.errors import SystemAudioCaptureError
+
+    rig, _echo = _make_echo_session(monkeypatch, tmp_path)
+    rig.recorder.emit(1)
+    rig.session._queue.join()
+    assert rig.worker.calls == []
+
+    if end == "stop":
+        rig.session.stop()
+    elif end == "pause":
+        rig.session.pause()
+    elif end == "mic off":
+        rig.session.toggle("mic")
+    elif end == "system off":
+        rig.session.toggle("system")
+    else:
+        rig.system.on_block(SystemAudioCaptureError("capture ended"))
+    rig.session._queue.join()
+
+    assert rig.worker.calls == [1]
+    assert [line.text for line in rig.session.lines] == ["spoken words"]
+    rig.session.stop()
+
+
+def test_echo_filter_logs_its_state_and_its_times(monkeypatch, tmp_path, caplog):
+    caplog.set_level("INFO")
+    rig, _echo = _make_echo_session(monkeypatch, tmp_path)
+    rig.session.stop()
+
+    assert "live: echo_filter state=on" in caplog.text
+    assert "live: echo_filter_stopped cleaned_seconds=1 raw_seconds=0.5" in caplog.text
+
+
+def test_a_session_without_the_echo_filter_logs_that_it_is_off(monkeypatch, tmp_path, caplog):
+    caplog.set_level("INFO")
+    rig = _make_session(monkeypatch, tmp_path)
+    rig.session.stop()
+
+    assert "live: echo_filter state=off" in caplog.text
+    assert "echo_filter_stopped" not in caplog.text
