@@ -491,8 +491,13 @@ With `live.echo_filter` on, both jobs read the microphone audio through the
 They clean a temporary copy and delete it at the end; `mic.flac` does not
 change. A microphone line with no text in the cleaned audio is not in the new
 Re-transcribe revision. Thus Re-transcribe removes copied lines from a session
-that was recorded without the filter, and with the setting off it brings them
-back.
+that was recorded without the filter.
+
+Re-transcribe reads the lines of the current revision. A line that it removed
+does not come back when you run it again with the setting off. The earlier
+revision file stays in the session folder. To use it again, set
+`current_revision` in `session.json` to its name, for example
+`transcript.jsonl`.
 
 Re-diarize fails when speaker labels cannot run on this computer; Re-transcribe
 then keeps the speakers and replaces only the text. A file imported without
